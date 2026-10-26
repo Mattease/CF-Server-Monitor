@@ -24,7 +24,7 @@ jobs:
           echo "Attempting fast sync via GitHub merge-upstream API..."
           response=$(gh api -X POST repos/${{ github.repository }}/merge-upstream -f branch=main 2>&1) || true
           echo "$response"
-          if echo "$response" | grep -q -E "successfully merged|not behind"; then
+          if echo "$response" | grep -qi -E "successfully fetched and merged|not behind|merge_commit_sha"; then
             echo "API Sync succeeded."
             echo "synced=true" >> "$GITHUB_OUTPUT"
           else
