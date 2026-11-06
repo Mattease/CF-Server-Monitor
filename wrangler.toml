@@ -6,10 +6,6 @@ compatibility_flags = ["nodejs_compat"]
 
 keep_vars = true
 
-# 服务器状态空间（Muse Space）的来源，允许它跨站读公开 API
-[vars]
-CORS_ALLOWED_ORIGINS = "hatch-spaces://7e782b69-e5a6-4522-9e41-4d726bb5a2e7.metaaivm.com"
-
 # 定时任务配置（UTC）
 # - 每分钟：执行离线节点、资源告警
 # - 每小时：合并执行其他定时任务（表轮换、旧表清理、按配置时区/小时触发服务器到期检测）
