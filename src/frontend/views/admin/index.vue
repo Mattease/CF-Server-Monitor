@@ -2253,71 +2253,24 @@ const buildEditPayloadFromForm = (form) => {
 const saveEdit = async () => {
   validationError.value = null
 
-  const pingNodeValidation = getPingNodeValidation(editForm.value)
-  if (!pingNodeValidation.valid) {
-    validationError.value = buildPingNodeError(pingNodeValidation.field)
+  const built = buildEditPayloadFromForm(editForm.value)
+  if (built.error) {
+    validationError.value = built.error
     return
   }
 
-  const normalizedBillingCycle = normalizeBillingCycle(editForm.value.billing_cycle)
-  const normalizedAutoRenewal = editForm.value.auto_renewal ? '1' : '0'
-  const normalizedPrice = normalizePrice(editForm.value.price)
-  const normalizedCurrency = normalizeCurrency(editForm.value.currency || detectCurrencySymbol(editForm.value.price) || '¥')
-  const expireAtIso = editForm.value.expire_at_local ? localInputToIso(editForm.value.expire_at_local, editForm.value.timezone) : ''
-  const normalizedExpireAt = expireAtIso
-    ? renewExpireDateTimeIfNeeded(expireAtIso, normalizedBillingCycle, normalizedAutoRenewal).expire_at
-    : ''
-  const normalizedExpireDate = normalizedExpireAt ? normalizedExpireAt.slice(0, 10) : ''
-
-  editForm.value.price = normalizedPrice
-  editForm.value.currency = normalizedCurrency
-  editForm.value.billing_cycle = normalizedBillingCycle
-  editForm.value.expire_date = normalizedExpireDate
-  editForm.value.expire_at = normalizedExpireAt
-  if (normalizedExpireAt) {
-    editForm.value.expire_at_local = isoToLocalInput(normalizedExpireAt, editForm.value.timezone)
-  }
-
-  const data = {
-    action: 'edit',
-    id: editForm.value.id,
-    name: editForm.value.name,
-    server_group: editForm.value.server_group,
-    region: editForm.value.region,
-    tags: editForm.value.tags,
-    note: editForm.value.note,
-    price: normalizedPrice,
-    billing_cycle: normalizedBillingCycle,
-    auto_renewal: normalizedAutoRenewal,
-    currency: normalizedCurrency,
-    expire_date: normalizedExpireDate,
-    expire_at: normalizedExpireAt,
-    traffic_limit: editForm.value.traffic_limit,
-    traffic_calc_type: editForm.value.traffic_calc_type,
-    traffic_alert_percent: normalizeTrafficAlertPercentField(editForm.value.traffic_alert_percent),
-    interface: editForm.value.interface,
-    reset_day: editForm.value.reset_day,
-    reset_time: editForm.value.reset_time || '00:00:00',
-    timezone: editForm.value.timezone || '',
-    collect_interval: editForm.value.collect_interval,
-    report_interval: editForm.value.report_interval,
-    wss_report_interval: editForm.value.wss_report_interval,
-    connection_mode: getEffectiveConnectionMode(editForm.value.connection_mode),
-    ping_mode: editForm.value.ping_mode === 'icmp' ? 'icmp' : 'tcp',
-    custom_ct: pingNodeValidation.values.custom_ct,
-    custom_cu: pingNodeValidation.values.custom_cu,
-    custom_cm: pingNodeValidation.values.custom_cm,
-    custom_bd: pingNodeValidation.values.custom_bd,
-    node_1: pingNodeValidation.values.node_1, node_2: pingNodeValidation.values.node_2, node_3: pingNodeValidation.values.node_3, node_4: pingNodeValidation.values.node_4,
-    rx_correction: editForm.value.rx_correction,
-    tx_correction: editForm.value.tx_correction,
-    auto_update: editForm.value.auto_update ? '1' : '0',
-    is_hidden: editForm.value.is_hidden ? '1' : '0',
-    offline_notify_disabled: editForm.value.offline_notify_disabled ? '1' : '0'
+  // 回写归一化后的值到表单（保留原有副作用，供弹窗关闭后表单保持最新值）
+  editForm.value.price = built.normalized.price
+  editForm.value.currency = built.normalized.currency
+  editForm.value.billing_cycle = built.normalized.billing_cycle
+  editForm.value.expire_date = built.normalized.expire_date
+  editForm.value.expire_at = built.normalized.expire_at
+  if (built.normalized.expire_at) {
+    editForm.value.expire_at_local = isoToLocalInput(built.normalized.expire_at, editForm.value.timezone)
   }
 
   try {
-    const result = await adminApiForSite(data)
+    const result = await adminApiForSite(built.payload)
     if (!result.error) {
       saveResult.value = { success: true, message: getMessage(result.data.message) || trans.value.serverEdited }
       cancelAutoUpdateWarning()
@@ -2442,8 +2395,20 @@ const saveBatchEdit = async () => {
     let updated = 0
     for (const server of selected) {
       const form = createEditFormFromServer(server)
+      // 只勾选 timezone、未勾选 expire_at_local 时：form.expire_at_local 是旧时区的
+      // 墙上时间，直接换时区会篡改绝对到期时刻。先按旧时区转 ISO，再按新时区换算
+      // 回墙上时间，保证绝对时刻不变（与单台编辑的 watch 逻辑一致）。
+      const onlyTimezoneChanged = batchEditEnabled.value.timezone && !batchEditEnabled.value.expire_at_local
+      const oldTimezone = server.timezone || ''
       for (const field of enabledFields) {
         form[field] = batchEditForm.value[field]
+      }
+      if (onlyTimezoneChanged && form.expire_at_local) {
+        const newTimezone = form.timezone || ''
+        if (oldTimezone !== newTimezone) {
+          const iso = localInputToIso(form.expire_at_local, oldTimezone)
+          if (iso) form.expire_at_local = isoToLocalInput(iso, newTimezone)
+        }
       }
       const built = buildEditPayloadFromForm(form)
       if (built.error) {

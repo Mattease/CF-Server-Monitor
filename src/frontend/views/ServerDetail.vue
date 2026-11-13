@@ -52,7 +52,7 @@
           <span class="sysinfo-label">⏱ {{ trans.uptime }}</span>
           <span class="sysinfo-value">{{ formatUptime(server.boot_time) }}</span>
         </div>
-        <div class="sysinfo-item" v-if="server.expire_date">
+        <div class="sysinfo-item" v-if="resolveExpireAt(server)">
           <span class="sysinfo-label">📅 {{ trans.expire }}</span>
           <span class="sysinfo-value" :class="{ 'expired': isExpired }">{{ expireDaysText }}</span>
         </div>
@@ -405,6 +405,7 @@ import LiveConnectionTimeoutModal from '../components/LiveConnectionTimeoutModal
 import { fetchServerDetail, fetchAllHistory, fetchConfig, formatBytes, createLiveSocket, getFlagRegionCode, isServerOnline, normalizeLiveSocketTimeoutMinutes } from '../utils/api.js'
 import { isAdminLoggedIn } from '../utils/http'
 import { getTrafficUsageBytes } from '../composables/useServerCardData'
+import { parseExpireAt, resolveExpireAt } from '../utils/server.js'
 import { getPublicAssetUrl } from '../utils/config.js'
 import Chart from 'chart.js/auto'
 import { t, useTranslation } from '../utils/i18n'
@@ -654,17 +655,19 @@ const diskPercent = computed(() => {
 const diskIo = computed(() => hasValidDiskIoPayload(server.value) ? normalizeDiskIo(server.value) : EMPTY_DISK_IO)
 const hasGpuData = computed(() => gpuInfoList.value.length > 0)
 
+const expireAtMs = computed(() => {
+  const ms = parseExpireAt(resolveExpireAt(server.value))
+  return ms === null ? NaN : ms
+})
+
 const isExpired = computed(() => {
-  if (!server.value.expire_date) return false
-  const expTime = new Date(server.value.expire_date).getTime()
-  return isNaN(expTime) ? false : expTime < Date.now()
+  if (Number.isNaN(expireAtMs.value)) return false
+  return expireAtMs.value < Date.now()
 })
 
 const expireDaysText = computed(() => {
-  if (!server.value.expire_date) return ''
-  const expTime = new Date(server.value.expire_date).getTime()
-  if (isNaN(expTime)) return ''
-  const diff = expTime - Date.now()
+  if (Number.isNaN(expireAtMs.value)) return ''
+  const diff = expireAtMs.value - Date.now()
   const days = Math.ceil(diff / (1000 * 3600 * 24))
   return days > 0 ? `${days}${days === 1 ? trans.value.day : trans.value.days}` : trans.value.expired
 })
@@ -1527,7 +1530,7 @@ const appendDataToChart = (chart, datasetIndex, timestamp, value, isPing = false
   chart.update('none')
 }
 
-const STATIC_FIELDS = ['id', 'name', 'region', 'arch', 'os', 'kernel_version', 'cpu_info', 'cpu_cores', 'gpu_info', 'expire_date', 'server_group', 'traffic_limit', 'net_rx_monthly', 'net_tx_monthly', 'boot_time', 'timestamp', 'ip_v4', 'ip_v6']
+const STATIC_FIELDS = ['id', 'name', 'region', 'arch', 'os', 'kernel_version', 'cpu_info', 'cpu_cores', 'gpu_info', 'expire_date', 'expire_at', 'reset_day', 'reset_time', 'timezone', 'server_group', 'traffic_limit', 'net_rx_monthly', 'net_tx_monthly', 'boot_time', 'timestamp', 'ip_v4', 'ip_v6']
 const REALTIME_SAMPLE_FIELDS = new Set([
   'cpu', 'ram_total', 'ram_used', 'swap_total', 'swap_used',
   'net_in_speed', 'net_out_speed', 'disk'

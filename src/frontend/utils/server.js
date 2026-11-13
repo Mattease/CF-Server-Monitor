@@ -387,6 +387,13 @@ function formatTimezoneOffset(offsetMs) {
 export function isoToLocalInput(iso, timeZone) {
   const raw = String(iso || '').trim();
   if (!raw) return '';
+  // 无时区偏移的字符串本身就是墙上时间（如旧 expire_date 拼出的
+  // YYYY-MM-DDT00:00:00），直接返回，不要经浏览器本地时区解析后再跨时区换算，
+  // 否则会无故偏移（如北京时间解析再转纽约会倒退 12 小时）。
+  const rawParts = parseExpireAtParts(raw);
+  if (rawParts && !rawParts.offsetText) {
+    return `${toDateString(rawParts.year, rawParts.month, rawParts.day)}T${formatTimePart(rawParts.hour, rawParts.minute, rawParts.second)}`;
+  }
   const ms = parseExpireAt(raw);
   if (ms === null) {
     const dateOnly = raw.match(/^(\d{4}-\d{2}-\d{2})/)?.[1];

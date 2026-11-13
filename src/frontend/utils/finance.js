@@ -4,7 +4,9 @@ import {
   getBillingCycleOption,
   isFreePrice,
   normalizeCurrency,
-  normalizePrice
+  normalizePrice,
+  parseExpireAt,
+  resolveExpireAt
 } from './server.js'
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000
@@ -228,8 +230,8 @@ export function calculateFinanceSummary(servers, exchangeRates = DEFAULT_EXCHANG
     summary.configuredCount++
     summary.monthlyAverageCostCNY += calculateMonthlyAverageCostCNY(server, priceCNY)
 
-    const expireDate = String(server?.expire_date || server?.expired_at || '').trim()
-    if (!expireDate) {
+    const expireAt = resolveExpireAt(server)
+    if (!expireAt) {
       summary.missingExpireCount++
       // 无到期日无法按剩余时长折算，退化为按单个计费周期计价
       summary.totalValueCNY += priceCNY
@@ -247,10 +249,10 @@ export function calculateFinanceSummary(servers, exchangeRates = DEFAULT_EXCHANG
 }
 
 function calculateRemainingValueCNY(server, priceCNY, now = Date.now()) {
-  const expireDate = String(server?.expire_date || server?.expired_at || '').trim()
-  if (!expireDate || priceCNY <= 0) return 0
+  const expireAtMs = parseExpireAt(resolveExpireAt(server))
+  if (expireAtMs === null || priceCNY <= 0) return 0
 
-  const expiredAt = new Date(expireDate).getTime()
+  const expiredAt = expireAtMs
   if (!Number.isFinite(expiredAt)) return 0
 
   const diffMs = expiredAt - Number(now)
