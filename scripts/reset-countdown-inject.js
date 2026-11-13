@@ -90,8 +90,7 @@
           var days = daysUntilNextReset(s.reset_day, s.reset_time, s.timezone);
           if (days == null) return;
           var dayNum = parseInt(s.reset_day, 10);
-          var text = (days <= 0 ? '今天重置' : days + '天后重置') + ' · ' + dayNum + '号';
-          var rec = { days: days, text: text };
+          var rec = { days: days, dayNum: dayNum };
           if (s.uuid) resetByUuid[s.uuid] = rec;
           if (s.id) resetByUuid[s.id] = rec;
           if (s.name) resetByName[s.name] = rec;
@@ -101,22 +100,38 @@
   }
 
   // ---- 注入 ----
-  function makeBadge(text) {
+  // 徽章：方案2（数字突出）+ 方案4（按紧急变色）结合。
+  // 数字比正文略大（13px vs 11px），颜色按剩余天数分三档：
+  // >7 天淡靛蓝，4–7 天琥珀黄，≤3 天（含今天）红色。
+  function badgeColors(days) {
+    if (days <= 3) return { bg: '#fef2f2', fg: '#dc2626', border: '#fecaca' };
+    if (days <= 7) return { bg: '#fffbeb', fg: '#d97706', border: '#fde68a' };
+    return { bg: '#f5f7ff', fg: '#818cf8', border: '#e0e7ff' };
+  }
+  function makeBadge(rec) {
+    var c = badgeColors(rec.days);
     var badge = document.createElement('span');
     badge.setAttribute('data-kuskure-reset', '1');
-    badge.textContent = text;
     badge.style.cssText = [
-      'display:inline-flex', 'align-items:center', 'white-space:nowrap', 'flex-shrink:0',
+      'display:inline-flex', 'align-items:baseline', 'white-space:nowrap', 'flex-shrink:0',
       'margin-left:6px', 'padding:1px 7px', 'border-radius:999px',
-      'background:#f5f7ff', 'color:#818cf8', 'border:1px solid #e0e7ff',
+      'background:' + c.bg, 'color:' + c.fg, 'border:1px solid ' + c.border,
       'font-size:11px', 'line-height:16px', 'font-weight:500'
     ].join(';');
+    // 数字（或“今天”）略大加粗，其余小字
+    var num = document.createElement('span');
+    num.textContent = rec.days <= 0 ? '今天' : String(rec.days);
+    num.style.cssText = 'font-size:13px;line-height:16px;font-weight:700;';
+    badge.appendChild(num);
+    var rest = document.createElement('span');
+    rest.textContent = rec.days <= 0 ? '重置 · ' + rec.dayNum + '号' : '天后重置 · ' + rec.dayNum + '号';
+    badge.appendChild(rest);
     return badge;
   }
   // 把徽章塞进 label 内部末尾（紧贴标签文字），避免被 flex 布局换到下一行
   function injectBadgeIntoLabel(labelEl, rec) {
     if (!labelEl || labelEl.querySelector('[data-kuskure-reset]')) return false;
-    labelEl.appendChild(makeBadge(rec.text));
+    labelEl.appendChild(makeBadge(rec));
     return true;
   }
   function recForName(text) {
