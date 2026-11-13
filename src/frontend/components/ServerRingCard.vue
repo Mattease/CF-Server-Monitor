@@ -105,7 +105,7 @@
       <div v-if="sysConfig.show_tf" class="server-card-limit-section">
         <div class="server-card-limit-header">
           <span>{{ trans.monthlyTraffic }}</span>
-          <span>{{ trafficLimitText }}<template v-if="trafficLimitSummary"> | {{ trafficLimitPercentText }}%</template></span>
+          <span>{{ trafficLimitText }}<template v-if="trafficLimitSummary"> | {{ trafficLimitPercentText }}%</template><template v-if="resetCountdownText"> · {{ resetCountdownText }}</template></span>
         </div>
         <div class="server-card-limit-bar">
           <div v-if="trafficLimitSummary" class="server-card-limit-fill" :style="{ width: Math.min(100, trafficUsagePercent) + '%', background: getUsageColor(trafficUsagePercent) }"></div>
@@ -193,6 +193,7 @@ const {
   hasPublicIPv4,
   hasPublicIPv6,
   isExpired,
-  expireText
+  expireText,
+  resetCountdownText
 } = useServerCardData(props)
 </script>

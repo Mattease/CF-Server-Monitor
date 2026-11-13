@@ -136,6 +136,8 @@ export default {
   autoRenewal: '自動續約',
   expire: '剩餘時間',
   expireDays: '天',
+  resetInDays: '天後重置',
+  resetToday: '今天重置',
   day: '天',
   days: '天',
   month: '個月',

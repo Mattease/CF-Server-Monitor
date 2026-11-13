@@ -135,6 +135,8 @@ export default {
   autoRenewal: 'Auto Renewal',
   expire: 'Remaining Time',
   expireDays: 'd',
+  resetInDays: 'd until reset',
+  resetToday: 'Resets today',
   day: 'day',
   days: 'days',
   month: 'month',

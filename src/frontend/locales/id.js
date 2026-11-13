@@ -135,6 +135,8 @@ export default {
   autoRenewal: 'Perpanjangan Otomatis',
   expire: 'Sisa Waktu',
   expireDays: 'h',
+  resetInDays: 'h lagi direset',
+  resetToday: 'Direset hari ini',
   day: 'hari',
   days: 'hari',
   month: 'bulan',

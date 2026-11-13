@@ -3,7 +3,7 @@ import { formatBytes, getFlagRegionCode, isServerOnline } from '../utils/api'
 import { getPublicAssetUrl } from '../utils/config'
 import { currentLang, useTranslation } from '../utils/i18n'
 import { LATENCY_WINDOW, PING } from '../utils/constants'
-import { formatBillingPrice, parseExpireAt } from '../utils/server.js'
+import { formatBillingPrice, parseExpireAt, daysUntilNextReset } from '../utils/server.js'
 
 export const DEFAULT_SERVER_CARD_CONFIG = {
   show_price: true,
@@ -281,6 +281,14 @@ export function useServerCardData(props) {
     return days > 0 ? `${days}${trans.value.expireDays}` : trans.value.expired
   })
 
+  // 流量重置倒计时：直接用面板里已配好的 reset_day / reset_time / timezone；
+  // reset_day 为 0（不重置）时不显示。
+  const resetCountdownText = computed(() => {
+    const days = daysUntilNextReset(props.server.reset_day, props.server.reset_time, props.server.timezone, currentTime.value)
+    if (days === null || days === undefined) return ''
+    return days <= 0 ? trans.value.resetToday : `${days}${trans.value.resetInDays}`
+  })
+
   const getRingStyle = (value, color) => ({
     '--ring-value': `${clampPercent(value)}`,
     '--ring-color': color
@@ -519,6 +527,7 @@ export function useServerCardData(props) {
     diskUsageText,
     isExpired,
     expireText,
+    resetCountdownText,
     getUsageColor,
     getRingStyle,
     getMemoryRingStyle,

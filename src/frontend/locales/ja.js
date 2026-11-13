@@ -135,6 +135,8 @@ export default {
   autoRenewal: '自動更新',
   expire: '残り時間',
   expireDays: '日',
+  resetInDays: '日後にリセット',
+  resetToday: '今日リセット',
   day: '日',
   days: '日',
   month: 'か月',

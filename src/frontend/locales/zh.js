@@ -136,6 +136,8 @@ export default {
   autoRenewal: '自动续费',
   expire: '剩余时间',
   expireDays: '天',
+  resetInDays: '天后重置',
+  resetToday: '今天重置',
   day: '天',
   days: '天',
   month: '月',

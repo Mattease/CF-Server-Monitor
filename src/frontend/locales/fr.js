@@ -135,6 +135,8 @@ export default {
   autoRenewal: 'Renouvellement auto',
   expire: 'Temps restant',
   expireDays: 'j',
+  resetInDays: 'j avant réinitialisation',
+  resetToday: 'Réinitialisé aujourd’hui',
   day: 'jour',
   days: 'jours',
   month: 'mois',
