@@ -1080,6 +1080,18 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       )) {
         scheduleAgentReportModeChanged(env, ctx);
       }
+      // 改了自定义 UA 后同步刷新浏览器里的 cfsm_ua Cookie，否则下次请求仍带旧
+      // UA，与 Cloudflare WAF 规则期望的不一致，管理员会被自家规则拦在外面。
+      // 只有本次保存涉及 ua 字段时才动 Cookie；ua 为空表示关闭自定义 UA，清除 Cookie。
+      if (settings.ua !== undefined) {
+        const uaCookie = normalizedUserAgent
+          ? buildUaCookie(request, normalizedUserAgent)
+          : buildClearUaCookie(request);
+        return createSuccessResponseWithCookies({
+          success: true,
+          message: 'updateSuccess'
+        }, uaCookie ? [uaCookie] : []);
+      }
       return createSuccessResponse({
         success: true,
         message: 'updateSuccess'

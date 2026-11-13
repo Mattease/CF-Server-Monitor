@@ -440,16 +440,18 @@ export default {
         }
 
         if (setTurnstileVerified) {
+          // Turnstile 验证刚通过：仍需走 CORS 白名单校验，禁止无条件反射任意 Origin
+          //（否则任意站点都能带凭据读接口响应）。applyCors 只对白名单内的 Origin
+          // 设置 Allow-Origin / Allow-Credentials。
           const finalHeaders = new Headers(response.headers);
-          finalHeaders.set('Access-Control-Allow-Origin', request.headers.get('Origin') || '');
-          finalHeaders.set('Access-Control-Allow-Credentials', 'true');
           finalHeaders.set('Vary', 'Origin');
 
-          return new Response(response.body, {
+          const resp = new Response(response.body, {
             status: response.status,
             statusText: response.statusText,
             headers: finalHeaders
           });
+          return applyCors(resp, request, corsAllowedOrigins);
         }
 
         return applyCors(response, request, corsAllowedOrigins);

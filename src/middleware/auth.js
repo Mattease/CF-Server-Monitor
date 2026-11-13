@@ -15,10 +15,30 @@ async function generateKeyFromSecret(secret) {
   return await crypto.subtle.importKey('raw', keyData, ALGORITHM, false, ['sign', 'verify']);
 }
 
+// 标准 Base64URL 编解码（RFC 4648 §5）：+ → -、/ → _、去掉 = 填充。
+// 旧 Token 用的是普通 Base64（btoa 仅去 =，仍含 +/），解码时同时兼容两种：
+// 先把 -/_ 还原为 +/，再按需补齐 =，因此新旧 Token 都能验签。
+function base64UrlEncodeBytes(bytes) {
+  const bin = String.fromCharCode(...new Uint8Array(bytes));
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+function base64UrlEncodeString(str) {
+  return base64UrlEncodeBytes(new TextEncoder().encode(str));
+}
+function base64UrlDecodeToBytes(b64url) {
+  let b64 = String(b64url || '').replace(/-/g, '+').replace(/_/g, '/');
+  while (b64.length % 4) b64 += '=';
+  const bin = atob(b64);
+  return new Uint8Array([...bin].map((c) => c.charCodeAt(0)));
+}
+function base64UrlDecodeToString(b64url) {
+  return new TextDecoder().decode(base64UrlDecodeToBytes(b64url));
+}
+
 async function signJwt(payload, secret) {
   const header = { alg: 'HS256', typ: 'JWT' };
-  const encodedHeader = btoa(JSON.stringify(header)).replace(/=/g, '');
-  const encodedPayload = btoa(JSON.stringify(payload)).replace(/=/g, '');
+  const encodedHeader = base64UrlEncodeString(JSON.stringify(header));
+  const encodedPayload = base64UrlEncodeString(JSON.stringify(payload));
   
   const data = `${encodedHeader}.${encodedPayload}`;
   const key = await generateKeyFromSecret(secret);
@@ -27,7 +47,7 @@ async function signJwt(payload, secret) {
   const dataBytes = encoder.encode(data);
   const signature = await crypto.subtle.sign(ALGORITHM, key, dataBytes);
   
-  const encodedSignature = btoa(String.fromCharCode(...new Uint8Array(signature))).replace(/=/g, '');
+  const encodedSignature = base64UrlEncodeBytes(signature);
   
   return `${encodedHeader}.${encodedPayload}.${encodedSignature}`;
 }
@@ -47,7 +67,7 @@ async function verifyJwt(token, secret) {
     const encoder = new TextEncoder();
     const dataBytes = encoder.encode(data);
     
-    const signatureBytes = new Uint8Array(atob(encodedSignature).split('').map(c => c.charCodeAt(0)));
+    const signatureBytes = base64UrlDecodeToBytes(encodedSignature);
     
     const isValid = await crypto.subtle.verify(ALGORITHM, key, signatureBytes, dataBytes);
     
@@ -55,7 +75,7 @@ async function verifyJwt(token, secret) {
       return null;
     }
     
-    const payload = JSON.parse(atob(encodedPayload));
+    const payload = JSON.parse(base64UrlDecodeToString(encodedPayload));
     
     if (payload.exp && Date.now() > payload.exp * 1000) {
       return null;
