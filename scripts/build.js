@@ -31,10 +31,4 @@ if (fs.existsSync(indexHtmlPath)) {
   console.log('Renamed index.html → dashboard.html');
 }
 
-// 覆盖资产存储里残留的旧 index.html：首页统一跳到 /dashboard，
-// 由 Worker 经 serveFrontend 下发 dashboard.html（含主题与自定义注入）。
-// 否则 ASSETS 会直接拦截 / 并返回旧版 index.html。
-fs.writeFileSync(indexHtmlPath, '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n<meta charset="UTF-8">\n<meta http-equiv="refresh" content="0; url=/dashboard">\n<link rel="canonical" href="/dashboard">\n<title>Redirecting…</title>\n</head>\n<body>\n<script>location.replace("/dashboard");</script>\n</body>\n</html>\n');
-console.log('Wrote index.html redirect → /dashboard');
-
 console.log('Build complete!');
