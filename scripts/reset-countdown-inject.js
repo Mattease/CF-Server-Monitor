@@ -100,6 +100,31 @@
   }
 
   // ---- 注入 ----
+  function makeBadge(text) {
+    var badge = document.createElement('span');
+    badge.setAttribute('data-kuskure-reset', '1');
+    badge.textContent = text;
+    badge.style.cssText = [
+      'display:inline-flex', 'align-items:center', 'white-space:nowrap', 'flex-shrink:0',
+      'margin-left:6px', 'padding:1px 7px', 'border-radius:999px',
+      'background:#f5f7ff', 'color:#818cf8', 'border:1px solid #e0e7ff',
+      'font-size:11px', 'line-height:16px', 'font-weight:500'
+    ].join(';');
+    return badge;
+  }
+  // 把徽章塞进 label 内部末尾（紧贴标签文字），避免被 flex 布局换到下一行
+  function injectBadgeIntoLabel(labelEl, rec) {
+    if (!labelEl || labelEl.querySelector('[data-kuskure-reset]')) return false;
+    labelEl.appendChild(makeBadge(rec.text));
+    return true;
+  }
+  function recForName(text) {
+    var names = Object.keys(resetByName);
+    for (var i = 0; i < names.length; i++) {
+      if (names[i] && text.indexOf(names[i]) !== -1) return resetByName[names[i]];
+    }
+    return null;
+  }
   function serverKeyForCard(card) {
     // 优先用卡片内 /server/<uuid> 链接
     var link = card.querySelector('a[href*="/server/"]');
@@ -113,22 +138,22 @@
       if (title && resetByName[title]) return { kind: 'name', key: title };
     }
     // 兜底：卡片文本里找服务器名
-    var text = card.textContent || '';
-    var names = Object.keys(resetByName);
-    for (var i = 0; i < names.length; i++) {
-      if (names[i] && text.indexOf(names[i]) !== -1) return { kind: 'name', key: names[i] };
+    var rec = recForName(card.textContent || '');
+    if (rec) {
+      var names = Object.keys(resetByName);
+      for (var i = 0; i < names.length; i++) {
+        if (names[i] && (card.textContent || '').indexOf(names[i]) !== -1) return { kind: 'name', key: names[i] };
+      }
     }
     return null;
   }
+  // 小视图（紧凑卡片）：注入点是 .compact-node-traffic-label（“流量”）
   function injectIntoCard(card) {
     if (!card || card.dataset.kuskureResetDone) return;
     var found = serverKeyForCard(card);
     if (!found) return;
     var rec = found.kind === 'uuid' ? resetByUuid[found.key] : resetByName[found.key];
     if (!rec) return;
-    // 注入点：流量标签（.compact-node-traffic-label）后面，紧贴“流量”二字。
-    // SAO 紧凑卡有两种结构：有存续时 label 与 gauge/uptime/value 同在 .compact-node-traffic-body
-    // 里；无存续时 label 在 .compact-node-traffic-head 里。两种都直接跟在 label 后面。
     var labelEl = card.querySelector('.compact-node-traffic-label');
     if (!labelEl) {
       // 兜底：找文字为“流量”的 span
@@ -138,32 +163,35 @@
       }
     }
     if (!labelEl) return;
-    // 已注入过则跳过（React 重渲染会清掉标记，届时重新注入）
-    if (labelEl.querySelector('[data-kuskure-reset]')) return;
-    var badge = document.createElement('span');
-    badge.setAttribute('data-kuskure-reset', '1');
-    badge.textContent = rec.text;
-    badge.style.cssText = [
-      'display:inline-flex', 'align-items:center', 'white-space:nowrap', 'flex-shrink:0',
-      'margin-left:6px', 'padding:1px 7px', 'border-radius:999px',
-      'background:#eef2ff', 'color:#4f46e5', 'border:1px solid #c7d2fe',
-      'font-size:11px', 'line-height:16px', 'font-weight:600'
-    ].join(';');
-    // 插到 label 内部末尾（紧贴“流量”二字），避免被 flex 布局换到下一行
-    labelEl.appendChild(badge);
-    card.dataset.kuskureResetDone = '1';
+    if (injectBadgeIntoLabel(labelEl, rec)) card.dataset.kuskureResetDone = '1';
+  }
+  // 大视图（详情页/展开卡片）：注入点是 .traffic-quota-label（“剩余流量”）
+  function injectIntoDetailView() {
+    var labels = document.querySelectorAll('.traffic-quota-label');
+    if (!labels.length) return;
+    // 先认当前是哪台：详情页 URL /server/<uuid> 最准
+    var rec = null;
+    var m = (window.location.pathname || '').match(/\/server\/([^/?#]+)/);
+    if (m) rec = resetByUuid[decodeURIComponent(m[1])] || null;
+    if (!rec) rec = recForName(document.body.textContent || '');
+    if (!rec) return;
+    labels.forEach(function (labelEl) {
+      injectBadgeIntoLabel(labelEl, rec);
+    });
   }
   function scanAll() {
-    // SAO 卡片：article.compact-node-card / .server-card / article[id^="node-card-"]
+    // 小视图卡片：article.compact-node-card / .server-card / article[id^="node-card-"]
     var cards = document.querySelectorAll('article.compact-node-card, article.server-card, article[id^="node-card-"], .compact-node-card, .server-card');
     cards.forEach(injectIntoCard);
+    // 大视图（详情页/展开卡片）
+    injectIntoDetailView();
   }
 
   var observer = null;
   function startObserver() {
     if (observer) return;
     observer = new MutationObserver(function () {
-      // React 重渲染会清掉注入标记与 data 属性，重新扫描
+      // React 重渲染会清掉注入标记与 data 属性，重新扫描（小视图卡片 + 大视图）
       document.querySelectorAll('article.compact-node-card, article.server-card, article[id^="node-card-"], .compact-node-card, .server-card').forEach(function (card) {
         if (card.dataset.kuskureResetDone) {
           // 检查注入是否还在，不在则清标记重注
@@ -171,6 +199,7 @@
         }
         injectIntoCard(card);
       });
+      injectIntoDetailView();
     });
     observer.observe(document.body, { childList: true, subtree: true });
   }
