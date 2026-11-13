@@ -13,6 +13,7 @@ import {
   injectApiBase
 } from '../utils/csp.js';
 import { checkAuth } from '../middleware/auth.js';
+import { normalizeThemeUrl } from '../utils/common.js';
 import { RESET_COUNTDOWN_INJECT_SCRIPT } from '../utils/resetCountdownInjectScript.js';
 
 const IMMUTABLE_ASSET_CACHE_CONTROL = 'public, max-age=31536000, immutable';
@@ -190,34 +191,6 @@ function getContentType(path) {
   if (cleanPath.endsWith('.otf')) return 'font/otf';
   if (cleanPath.endsWith('.map')) return 'application/json;charset=UTF-8';
   return 'application/octet-stream';
-}
-
-function normalizeThemeUrl(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-
-  try {
-    const url = new URL(raw);
-    if (url.protocol !== 'https:' || url.hostname !== 'github.com') return '';
-    if (url.username || url.password || url.search || url.hash) return '';
-
-    const parts = url.pathname.split('/').filter(Boolean);
-    const ref = parts[3];
-    if (
-      parts.length < 4 ||
-      parts[2] !== 'tree' ||
-      !/^[A-Za-z0-9._-]+$/.test(parts[0]) ||
-      !/^[A-Za-z0-9._-]+$/.test(parts[1]) ||
-      !/^[A-Za-z0-9._-]+$/.test(ref) ||
-      parts.some(part => part === '.' || part === '..' || /[%\\]/.test(part))
-    ) {
-      return '';
-    }
-
-    return `https://github.com/${parts.join('/')}`;
-  } catch (_) {
-    return '';
-  }
 }
 
 function parseThemeUrl(themeUrl) {

@@ -264,3 +264,43 @@ export async function md5Hash(input) {
     return hex;
   }).join('');
 }
+
+/**
+ * 归一化主题地址：只接受 https://github.com/<owner>/<repo>/tree/<ref>[/...]。
+ * 返回值语义（两处调用方都要）：
+ * - 输入 undefined → 返回 undefined（表示“未提供”，调用方不改动原值）；
+ * - 输入空串 → 返回 ''（表示“清空主题”）；
+ * - 非法地址 → 返回 null（admin.js 靠 `=== null` 判非法并报错/丢弃）；
+ * - 合法地址 → 返回规范化的 https://github.com/... 完整地址。
+ * frontend.js 的调用方只做真值判断（null/''/undefined 均为“无主题”），
+ * 因此用同一套语义是安全的。
+ */
+export function normalizeThemeUrl(value) {
+  if (value === undefined) return undefined;
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:') return null;
+    if (url.hostname !== 'github.com') return null;
+    if (url.username || url.password || url.search || url.hash) return null;
+
+    const parts = url.pathname.split('/').filter(Boolean);
+    const ref = parts[3];
+    if (
+      parts.length < 4 ||
+      parts[2] !== 'tree' ||
+      !/^[A-Za-z0-9._-]+$/.test(parts[0]) ||
+      !/^[A-Za-z0-9._-]+$/.test(parts[1]) ||
+      !/^[A-Za-z0-9._-]+$/.test(ref) ||
+      parts.some(part => part === '.' || part === '..' || /[%\\]/.test(part))
+    ) {
+      return null;
+    }
+
+    return `https://github.com/${parts.join('/')}`;
+  } catch (_) {
+    return null;
+  }
+}

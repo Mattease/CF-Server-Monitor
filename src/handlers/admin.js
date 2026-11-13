@@ -4,7 +4,7 @@ import { getAllServers, clearServersListCache } from '../utils/cache.js';
 import { clearAppearanceSettingsCache, isValidThemeOptions, isWssReportConfigured, isWssReportEnabled, normalizeBooleanSetting, normalizeDefaultLanguage, normalizeDisplayMode, normalizeExpireNotificationTime, normalizeExpireReminder, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, normalizeNotificationLanguage, normalizeNotificationTemplate, normalizeNotificationTimezone, normalizeNotificationWebhookBody, normalizeNotificationWebhookFormat, normalizeNotificationWebhookHeaders, normalizeNotificationWebhookMethod, normalizePreferredTheme, normalizeResourceAlertRules, normalizeTgNotify, normalizeWssReportHours, saveSiteOptions, saveAppearanceOptions, saveThemeOptions, validateUserAgent, SITE_FIELDS, APPEARANCE_FIELDS, IMPORTABLE_SITE_FIELDS, IMPORTABLE_APPEARANCE_FIELDS, loadSiteSettings, loadAppearanceOptions } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { normalizePctOrNull } from '../utils/traffic.js';
-import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
+import { verifyTurnstileToken, hashPassword, normalizeThemeUrl } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
 import { addServerColumns } from '../database/updateDatabase.js';
 import { clearResourceAlertState, isSmtpNotificationTarget, sendNotification } from '../services/notification.js';
@@ -197,36 +197,6 @@ function createSuccessResponseWithCookies(data, cookies = []) {
     if (cookie) headers.append('Set-Cookie', cookie);
   }
   return new Response(JSON.stringify(data), { status: 200, headers });
-}
-
-function normalizeThemeUrl(value) {
-  if (value === undefined) return undefined;
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-
-  try {
-    const url = new URL(raw);
-    if (url.protocol !== 'https:') return null;
-    if (url.hostname !== 'github.com') return null;
-    if (url.username || url.password || url.search || url.hash) return null;
-
-    const parts = url.pathname.split('/').filter(Boolean);
-    const ref = parts[3];
-    if (
-      parts.length < 4 ||
-      parts[2] !== 'tree' ||
-      !/^[A-Za-z0-9._-]+$/.test(parts[0]) ||
-      !/^[A-Za-z0-9._-]+$/.test(parts[1]) ||
-      !/^[A-Za-z0-9._-]+$/.test(ref) ||
-      parts.some(part => part === '.' || part === '..' || /[%\\]/.test(part))
-    ) {
-      return null;
-    }
-
-    return `https://github.com/${parts.join('/')}`;
-  } catch (_) {
-    return null;
-  }
 }
 
 function getThemeRawIndexUrl(themeUrl) {
