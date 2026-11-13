@@ -55,25 +55,31 @@
     };
   }
   // 与面板 daysUntilNextReset / 探针算法一致：reset_day 超当月天数顺延下月 1 号
+  // 候选本月与下月（for add 循环），每候选月内若 day 超天数则顺延到再下月 1 号，
+  // 取第一个在未来的候选时刻。旧写法在“已过本月重置点且下月天数不足”时漏加月份
+  // （如 1 月 31 日 14:00、reset_day=31 会错算成 2 月 1 日，正确为 3 月 1 日）。
   function daysUntilNextReset(resetDay, resetTime, timeZone, nowMs) {
     var day = parseInt(resetDay, 10);
     if (!day || day < 1 || day > 31) return null;
     var t = parseResetTime(resetTime);
     var now = nowMs || Date.now();
     var wp = zonedParts(timeZone, now);
-    var dim = daysInMonth(wp.year, wp.month);
-    var targetDay = day, targetMonth = wp.month, targetYear = wp.year;
-    if (day > dim) { targetDay = 1; targetMonth = wp.month + 1; if (targetMonth > 12) { targetMonth = 1; targetYear += 1; } }
-    var targetMs = zonedMs(targetYear, targetMonth, targetDay, t.h, t.m, t.s, timeZone);
-    if (targetMs <= now) {
-      // 已过本月重置点，移到下月
-      targetMonth += 1;
-      if (targetMonth > 12) { targetMonth = 1; targetYear += 1; }
-      var dim2 = daysInMonth(targetYear, targetMonth);
-      var d2 = day > dim2 ? 1 : day;
-      targetMs = zonedMs(targetYear, targetMonth, d2, t.h, t.m, t.s, timeZone);
+    for (var add = 0; add < 2; add++) {
+      var total = wp.month - 1 + add;
+      var y = wp.year + Math.floor(total / 12);
+      var m = ((total % 12) + 12) % 12 + 1;
+      var dim = daysInMonth(y, m);
+      var ry = y, rm = m, rd = day;
+      if (day > dim) {
+        var nt = m + 1;
+        ry = nt > 12 ? y + 1 : y;
+        rm = nt > 12 ? 1 : nt;
+        rd = 1;
+      }
+      var ms = zonedMs(ry, rm, rd, t.h, t.m, t.s, timeZone);
+      if (ms > now) return Math.ceil((ms - now) / 86400000);
     }
-    return Math.ceil((targetMs - now) / 86400000);
+    return null;
   }
 
   // ---- 拉服务器重置配置 ----
