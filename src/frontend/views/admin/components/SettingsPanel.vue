@@ -871,7 +871,7 @@ import { NOTIFICATION_LANGUAGE_CODES } from '../../../../shared/languages.js'
 const languages = LANGUAGES
 
 // 自定义 UA 与 Cloudflare 放行规则的说明见 README「安全建议」章节。
-const CUSTOM_USER_AGENT_DOC_URL = 'https://github.com/huilang-me/CF-Server-Monitor#cloudflare-安全规则拦截'
+const CUSTOM_USER_AGENT_DOC_URL = 'https://github.com/Mattease/CF-Server-Monitor#cloudflare-安全规则拦截'
 
 // 通知语言只支持后端已有文案的语种；选项固定显示各语言原生名称，不随界面语言翻译。
 const notificationLanguages = NOTIFICATION_LANGUAGE_CODES
