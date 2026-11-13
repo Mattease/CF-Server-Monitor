@@ -114,14 +114,14 @@
     badge.setAttribute('data-kuskure-reset', '1');
     badge.style.cssText = [
       'display:inline-flex', 'align-items:baseline', 'white-space:nowrap', 'flex-shrink:0',
-      'margin-left:6px', 'padding:1px 7px', 'border-radius:999px',
+      'margin-left:6px', 'padding:0 6px', 'border-radius:999px',
       'background:' + c.bg, 'color:' + c.fg, 'border:1px solid ' + c.border,
-      'font-size:11px', 'line-height:16px', 'font-weight:500'
+      'font-size:10px', 'line-height:14px', 'font-weight:500', 'letter-spacing:0.5px'
     ].join(';');
     // 数字（或“今天”）略大加粗，其余小字
     var num = document.createElement('span');
     num.textContent = rec.days <= 0 ? '今天' : String(rec.days);
-    num.style.cssText = 'font-size:13px;line-height:16px;font-weight:700;';
+    num.style.cssText = 'font-size:12px;line-height:14px;font-weight:700;';
     badge.appendChild(num);
     var rest = document.createElement('span');
     rest.textContent = rec.days <= 0 ? '重置 · ' + rec.dayNum + '号' : '天后重置 · ' + rec.dayNum + '号';
