@@ -9,7 +9,7 @@ import { AppError, createSuccessResponse, createBadRequestResponse, createUnauth
 import { addServerColumns } from '../database/updateDatabase.js';
 import { clearResourceAlertState, isSmtpNotificationTarget, sendNotification } from '../services/notification.js';
 import { getNotificationMessages } from '../services/notificationMessages.js';
-import { HISTORY_PARTITION_PICK_SQL, insertServerWithPartition } from '../database/indexOptimization.js';
+import { HISTORY_PARTITION_PICK_SQL, getHistoryIdRange, insertServerWithPartition } from '../database/indexOptimization.js';
 import { isValidTrafficCorrection, normalizeConnectionMode, normalizePingMode, normalizeResetTime, normalizeTimezone, normalizeWssReportInterval, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
 import { scheduleAgentConfigChanged, scheduleAgentReportModeChanged } from '../utils/agentConfigNotify.js';
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded, renewExpireDateTimeIfNeeded, resolveExpireAt } from '../utils/serverBilling.js';
@@ -263,16 +263,30 @@ async function validateThemeUrlAvailable(themeUrl) {
 
 async function deleteServer(db, id) {
   try {
-    const stmt1 = db.prepare(`PRAGMA foreign_key_list(metrics_history)`);
-    const result1 = await stmt1.all();
-    if (result1.results.length > 0) {
-      await db.prepare('DELETE FROM metrics_history WHERE server_id = ?').bind(id).run();
-    }
-
-    const stmt2 = db.prepare(`PRAGMA foreign_key_list(metrics_history_old)`);
-    const result2 = await stmt2.all();
-    if (result2.results.length > 0) {
-      await db.prepare('DELETE FROM metrics_history_old WHERE server_id = ?').bind(id).run();
+    // 先取该服务器的历史分区号，再用主键范围删除历史记录。
+    // metrics_history 表没有定义外键，PRAGMA foreign_key_list 恒为空，
+    // 旧代码的“有外键才删”分支是死代码，历史从未被清理；
+    // 且该表无 server_id 二级索引，不能直接 DELETE WHERE server_id
+    //（会全表扫描耗尽 D1 rowsRead 额度），必须用 id 主键范围定位。
+    const row = await db.prepare('SELECT history_partition_id FROM servers WHERE id = ?').bind(id).first();
+    const partitionId = row ? Number(row.history_partition_id) : 0;
+    if (Number.isInteger(partitionId) && partitionId >= 1 && partitionId <= 900) {
+      try {
+        const { startId, endId } = getHistoryIdRange(partitionId);
+        await db.prepare('DELETE FROM metrics_history WHERE id >= ? AND id <= ? AND server_id = ?')
+          .bind(startId, endId, id).run();
+        // metrics_history_old 是轮换产生的旧表，可能不存在，先确认表存在再删
+        const oldTable = await db.prepare(
+          `SELECT name FROM sqlite_master WHERE type='table' AND name='metrics_history_old'`
+        ).first();
+        if (oldTable) {
+          await db.prepare('DELETE FROM metrics_history_old WHERE id >= ? AND id <= ? AND server_id = ?')
+            .bind(startId, endId, id).run();
+        }
+      } catch (historyErr) {
+        // 历史清理失败不阻塞服务器本身的删除，只记日志
+        console.error('[ERROR] Failed to clean metrics history for server', id, historyErr);
+      }
     }
 
     await db.prepare('DELETE FROM servers WHERE id = ?').bind(id).run();
