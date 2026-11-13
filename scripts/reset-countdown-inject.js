@@ -139,22 +139,18 @@
     }
     if (!labelEl) return;
     // 已注入过则跳过（React 重渲染会清掉标记，届时重新注入）
-    if (labelEl.parentElement && labelEl.parentElement.querySelector('[data-kuskure-reset]')) return;
+    if (labelEl.querySelector('[data-kuskure-reset]')) return;
     var badge = document.createElement('span');
     badge.setAttribute('data-kuskure-reset', '1');
     badge.textContent = rec.text;
     badge.style.cssText = [
-      'display:inline-flex', 'align-items:center', 'white-space:nowrap',
+      'display:inline-flex', 'align-items:center', 'white-space:nowrap', 'flex-shrink:0',
       'margin-left:6px', 'padding:1px 7px', 'border-radius:999px',
       'background:#eef2ff', 'color:#4f46e5', 'border:1px solid #c7d2fe',
       'font-size:11px', 'line-height:16px', 'font-weight:600'
     ].join(';');
-    // 插到 label 后面（紧贴“流量”）
-    if (labelEl.nextSibling) {
-      labelEl.parentElement.insertBefore(badge, labelEl.nextSibling);
-    } else {
-      labelEl.parentElement.appendChild(badge);
-    }
+    // 插到 label 内部末尾（紧贴“流量”二字），避免被 flex 布局换到下一行
+    labelEl.appendChild(badge);
     card.dataset.kuskureResetDone = '1';
   }
   function scanAll() {
