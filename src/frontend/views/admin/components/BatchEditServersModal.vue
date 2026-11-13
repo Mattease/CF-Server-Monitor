@@ -35,8 +35,13 @@
               <option v-for="item in billingCycleOptions" :key="item.value" :value="item.value">{{ cycleLabel(item) }}</option>
             </select>
           </BatchEditField>
-          <BatchEditField :enabled="enabled.expire_date" :label="trans.expirationDate" @toggle="toggleField('expire_date', $event)">
-            <input type="date" v-model="form.expire_date" class="form-input" :disabled="!enabled.expire_date" @click="openDatePicker">
+          <BatchEditField :enabled="enabled.expire_at_local" :label="trans.expirationDate" @toggle="toggleField('expire_at_local', $event)">
+            <input type="datetime-local" step="1" v-model="form.expire_at_local" class="form-input" :disabled="!enabled.expire_at_local" @click="openDatePicker">
+          </BatchEditField>
+          <BatchEditField :enabled="enabled.timezone" :label="trans.billingTimezone" @toggle="toggleField('timezone', $event)">
+            <select v-model="form.timezone" class="form-select" :disabled="!enabled.timezone">
+              <option v-for="zone in billingTimezoneOptions" :key="zone || 'local'" :value="zone">{{ zone || trans.billingTimezoneLocal || 'Local' }}</option>
+            </select>
           </BatchEditField>
           <BatchEditField :enabled="enabled.auto_renewal" :label="trans.autoRenewal" @toggle="toggleField('auto_renewal', $event)">
             <select v-model="form.auto_renewal" class="form-select" :disabled="!enabled.auto_renewal">
@@ -64,6 +69,9 @@
               <option :value="0">0</option>
               <option v-for="day in 31" :key="day" :value="day">{{ day }}</option>
             </select>
+          </BatchEditField>
+          <BatchEditField :enabled="enabled.reset_time" :label="trans.trafficResetTime" @toggle="toggleField('reset_time', $event)">
+            <input type="time" step="1" v-model="form.reset_time" class="form-input" :disabled="!enabled.reset_time">
           </BatchEditField>
           <BatchEditField :enabled="enabled.traffic_alert_percent" :label="`${trans.trafficAlertPercent} (%)`" @toggle="toggleField('traffic_alert_percent', $event)">
             <input type="number" v-model="form.traffic_alert_percent" class="form-input" :disabled="!enabled.traffic_alert_percent" min="0" max="100" step="1">
@@ -188,6 +196,7 @@ defineProps({
 defineEmits(['save', 'close'])
 
 const billingCycleOptions = BILLING_CYCLES
+const billingTimezoneOptions = ['', 'UTC', 'Asia/Shanghai', 'Asia/Tokyo', 'America/Los_Angeles', 'America/New_York', 'Europe/London', 'Australia/Sydney']
 const currencyOptions = CURRENCY_OPTIONS
 const currencySelectOptions = computed(() => {
   const currentCurrency = String(form.value.currency || '').trim()

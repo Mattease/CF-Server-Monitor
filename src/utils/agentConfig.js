@@ -1,12 +1,13 @@
 import { md5Hash } from './common.js';
 import { isWssReportConfigured, sanitizeUserAgent } from './settings.js';
 
-export const AGENT_CONFIG_SCHEMA_VERSION = 7;
+export const AGENT_CONFIG_SCHEMA_VERSION = 8;
 export const AGENT_CONFIG_LEGACY_SCHEMA_VERSION = 3;
 export const AGENT_CONFIG_CONNECTION_MODE_SCHEMA_VERSION = 4;
 export const AGENT_CONFIG_WSS_REPORT_INTERVAL_SCHEMA_VERSION = 5;
 export const AGENT_CONFIG_PING_MODE_SCHEMA_VERSION = 6;
 export const AGENT_CONFIG_EXTRA_NODES_SCHEMA_VERSION = 7;
+export const AGENT_CONFIG_RESET_TIME_SCHEMA_VERSION = 8;
 export const AGENT_CONFIG_SCHEMA_HEADER = 'X-Agent-Config-Schema';
 export const AGENT_CONFIG_MD5_HEADER = 'X-Agent-Config-Md5';
 // 自定义 UA 的独立下发通道：只在 POST /update 认证通过后的 2xx 响应上出现，不参与配置 md5。
@@ -28,6 +29,28 @@ const IPV4_PATTERN = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 const IPV4_LIKE_PATTERN = /^(?:\d+\.){3}\d+$/;
 const IPV6_PATTERN = /^(?:(?:[0-9a-f]{1,4}:){1,7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:|(?:[0-9a-f]{1,4}:){1,6}:[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,5}(?::[0-9a-f]{1,4}){1,2}|(?:[0-9a-f]{1,4}:){1,4}(?::[0-9a-f]{1,4}){1,3}|(?:[0-9a-f]{1,4}:){1,3}(?::[0-9a-f]{1,4}){1,4}|(?:[0-9a-f]{1,4}:){1,2}(?::[0-9a-f]{1,4}){1,5}|[0-9a-f]{1,4}:(?:(?::[0-9a-f]{1,4}){1,6})|:(?:(?::[0-9a-f]{1,4}){1,7}|:))$/i;
 const NETWORK_INTERFACE_PATTERN = /^[A-Za-z0-9_.:-]+$/;
+const RESET_TIME_PATTERN = /^(\d{1,2}):(\d{2}):(\d{2})$/;
+const TIMEZONE_PATTERN = /^[A-Za-z0-9_+\-/]{1,64}$/;
+
+export function normalizeResetTime(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '00:00:00';
+  const match = raw.match(RESET_TIME_PATTERN);
+  if (!match) return '00:00:00';
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const second = Number(match[3]);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) {
+    return '00:00:00';
+  }
+  return [hour, minute, second].map(part => String(part).padStart(2, '0')).join(':');
+}
+
+export function normalizeTimezone(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  return TIMEZONE_PATTERN.test(raw) ? raw : '';
+}
 
 function normalizeSchemaVersion(value) {
   const version = Number(value);
@@ -85,6 +108,21 @@ export function validateAgentConfigInput(input) {
   const resetError = validateInteger('reset_day', input.reset_day, null, 0, 31);
   if (resetError) return { valid: false, error: resetError };
 
+  // reset_time / timezone 与 reset_day 同款严格校验：传了但非法就拒绝，
+  // 不传或空串则取默认值（00:00:00 / 跟随机器本地时区）。
+  const rawResetTime = input.reset_time === undefined || input.reset_time === null
+    ? ''
+    : String(input.reset_time).trim();
+  if (rawResetTime && normalizeResetTime(rawResetTime) === '00:00:00' && rawResetTime !== '00:00:00' && rawResetTime !== '0:00:00') {
+    return { valid: false, error: 'reset_time is invalid' };
+  }
+  const rawTimezone = input.timezone === undefined || input.timezone === null
+    ? ''
+    : String(input.timezone).trim();
+  if (rawTimezone && !TIMEZONE_PATTERN.test(rawTimezone)) {
+    return { valid: false, error: 'timezone is invalid' };
+  }
+
   if (input.collect_interval > 0 && input.report_interval < input.collect_interval) {
     return { valid: false, error: 'report_interval must be greater than or equal to collect_interval' };
   }
@@ -113,6 +151,8 @@ export function validateAgentConfigInput(input) {
       report_interval: input.report_interval,
       wss_report_interval: wssReportInterval,
       reset_day: input.reset_day,
+      reset_time: normalizeResetTime(input.reset_time),
+      timezone: normalizeTimezone(input.timezone),
       connection_mode: connectionMode,
       ping_mode: pingMode,
       schema_version: AGENT_CONFIG_SCHEMA_VERSION
@@ -338,6 +378,11 @@ export function buildAgentConfig(server, settings = null, schemaVersion = AGENT_
     config.ping_mode = normalizePingMode(server?.ping_mode) || PING_MODE_TCP;
   }
 
+  if (version >= AGENT_CONFIG_RESET_TIME_SCHEMA_VERSION) {
+    config.reset_time = normalizeResetTime(server?.reset_time);
+    config.timezone = normalizeTimezone(server?.timezone);
+  }
+
   return config;
 }
 
@@ -365,6 +410,14 @@ export function serializeAgentConfig(config) {
   }
   if (Object.prototype.hasOwnProperty.call(config, 'ping_mode')) {
     serialized += `&ping_mode=${config.ping_mode}`;
+  }
+  if (Object.prototype.hasOwnProperty.call(config, 'reset_time')) {
+    // reset_time 的冒号在探针 remoteBodyRE 里是允许的，不用编码
+    serialized += `&reset_time=${config.reset_time}`;
+  }
+  if (Object.prototype.hasOwnProperty.call(config, 'timezone')) {
+    // timezone 含 /，必须 percent-encode（remoteBodyRE 不允许 / 出现）
+    serialized += `&timezone=${encodeURIComponent(config.timezone)}`;
   }
   return serialized;
 }

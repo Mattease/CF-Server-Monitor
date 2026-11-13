@@ -24,7 +24,7 @@ import {
   normalizePctOrNull,
   normalizeTrafficLimitGb
 } from '../utils/traffic.js';
-import { detectBillingCycle, isEnabledFlag, normalizeBillingCycle, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
+import { detectBillingCycle, isEnabledFlag, normalizeBillingCycle, parseExpireAt, renewExpireDateTimeIfNeeded, resolveExpireAt } from '../utils/serverBilling.js';
 import {
   NOTIFICATION_MAX_RETRIES,
   NOTIFICATION_RETRY_DELAY_MS,
@@ -89,29 +89,6 @@ function isExpireNotificationTimeDue(settings = {}, timestamp = Date.now()) {
   const parts = getZonedDateParts(timestamp, settings.notification_timezone);
   if (!parts) return false;
   return Number(parts.hour) === Number(normalizeExpireNotificationTime(settings.expire_notification_time));
-}
-
-function getZonedDateSerial(timestamp, timezone) {
-  const parts = getZonedDateParts(timestamp, timezone);
-  if (!parts) return NaN;
-  return Math.floor(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)) / DAY_MS);
-}
-
-function parseDateSerial(dateString) {
-  const match = String(dateString || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) return NaN;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  if (
-    date.getUTCFullYear() !== year ||
-    date.getUTCMonth() !== month - 1 ||
-    date.getUTCDate() !== day
-  ) {
-    return NaN;
-  }
-  return Math.floor(date.getTime() / DAY_MS);
 }
 
 function formatMegabitsPerSecond(value) {
@@ -1331,6 +1308,18 @@ export async function checkResourceAlerts(env, options = {}) {
   }
 }
 
+// 到期时间的展示形式：有 expire_at 时显示墙上时间的时分秒（YYYY-MM-DD HH:MM:SS），
+// 只有 expire_date 时只显示日期。
+function formatExpireDisplay(server) {
+  const raw = String(server?.expire_at || '').trim();
+  if (raw && parseExpireAt(raw) !== null) {
+    const match = raw.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/);
+    if (match) return `${match[1]} ${match[2]}`;
+    return raw.slice(0, 10);
+  }
+  return String(server?.expire_date || '').trim().slice(0, 10);
+}
+
 export async function checkExpiringServers(db, options = {}) {
   const siteSettings = await loadSiteSettings(db);
   const now = Number(options?.now || Date.now());
@@ -1345,22 +1334,25 @@ export async function checkExpiringServers(db, options = {}) {
     const reminderDays = getExpireReminderDays(siteSettings.expire_reminder);
     const shouldNotify = reminderDays > 0 && hasNotificationTarget(siteSettings);
     const renewedServers = [];
-    const currentDateSerial = getZonedDateSerial(now, siteSettings.notification_timezone);
 
     for (const s of allServers) {
-      if (!s.expire_date) continue;
+      // expire_at 优先；为空则用 expire_date 当天 00:00
+      const expireAt = resolveExpireAt(s);
+      if (!expireAt) continue;
 
       const billingCycle = normalizeBillingCycle(detectBillingCycle(s.price) || s.billing_cycle);
-      // 续费时机 = 到期日 - min(提醒天数, 5)，最长提前 5 天
-      const renewal = renewExpireDateIfNeeded(s.expire_date, billingCycle, s.auto_renewal, now, Math.min(reminderDays, 5));
+      // 续费时机 = 到期时刻 - min(提醒天数, 5)，最长提前 5 天
+      const renewal = renewExpireDateTimeIfNeeded(expireAt, billingCycle, s.auto_renewal, now, Math.min(reminderDays, 5));
       if (renewal.renewed) {
+        const renewedExpireDate = renewal.expire_at.slice(0, 10);
         await db.prepare(
-          'UPDATE servers SET expire_date = ?, billing_cycle = ? WHERE id = ?'
-        ).bind(renewal.expire_date, billingCycle, s.id).run();
-        s.expire_date = renewal.expire_date;
+          'UPDATE servers SET expire_at = ?, expire_date = ?, billing_cycle = ? WHERE id = ?'
+        ).bind(renewal.expire_at, renewedExpireDate, billingCycle, s.id).run();
+        s.expire_at = renewal.expire_at;
+        s.expire_date = renewedExpireDate;
         s.billing_cycle = billingCycle;
-        renewedServers.push({ name: s.name, expire_date: renewal.expire_date });
-        debug(`[Cron] 服务器 ${s.name} 已自动续费，到期日期更新为 ${s.expire_date}`);
+        renewedServers.push({ name: s.name, expire_at: renewal.expire_at, expire_date: renewedExpireDate });
+        debug(`[Cron] 服务器 ${s.name} 已自动续费，到期时间更新为 ${s.expire_at}`);
       }
 
       // 勾选自动续费的节点只走「续费成功」提醒，不计入到期提醒
@@ -1368,15 +1360,16 @@ export async function checkExpiringServers(db, options = {}) {
 
       if (!shouldNotify) continue;
 
-      const expireDateSerial = parseDateSerial(s.expire_date);
-      if (!Number.isFinite(expireDateSerial) || !Number.isFinite(currentDateSerial)) continue;
+      // 直接比绝对时刻：剩余天数 = 向上取整（到期毫秒 - 现在毫秒）/ 天
+      const expireMs = parseExpireAt(resolveExpireAt(s));
+      if (expireMs === null) continue;
 
-      const days = expireDateSerial - currentDateSerial;
+      const days = Math.ceil((expireMs - now) / DAY_MS);
 
-      debug(`[Cron] 检测到服务器 ${s.name} 到期日期 ${s.expire_date}，剩余天数 ${days} 天`);
+      debug(`[Cron] 检测到服务器 ${s.name} 到期时间 ${resolveExpireAt(s)}，剩余天数 ${days} 天`);
 
       if (days > 0 && days <= reminderDays) {
-        expiringServers.push({ name: s.name, expire_date: s.expire_date, days });
+        expiringServers.push({ name: s.name, expire_at: s.expire_at, expire_date: s.expire_date, days });
       }
     }
 
@@ -1386,7 +1379,7 @@ export async function checkExpiringServers(db, options = {}) {
 
       // 续费成功提醒：与「到期提醒」开关解耦，只要配置了通知渠道就发送
       if (hasNotificationTarget(siteSettings)) {
-        const renewalList = renewedServers.map(s => `${s.name}  ${messages.renewedUntil(s.expire_date)}`).join('\n');
+        const renewalList = renewedServers.map(s => `${s.name}  ${messages.renewedUntil(formatExpireDisplay(s))}`).join('\n');
         debug(`[Cron] 发送自动续费成功通知: ${renewalList}`);
         try {
           await sendNotification(siteSettings, renewalList, {
@@ -1403,7 +1396,7 @@ export async function checkExpiringServers(db, options = {}) {
     }
 
     if (expiringServers.length > 0) {
-      const serverList = expiringServers.map(s => `${s.name}  ${messages.daysLeft(s.days)}  ${s.expire_date}`).join('\n');
+      const serverList = expiringServers.map(s => `${s.name}  ${messages.daysLeft(s.days)}  ${formatExpireDisplay(s)}`).join('\n');
       const msg = serverList;
       debug(`[Cron] 发送到期提醒通知: ${msg}`);
       try {

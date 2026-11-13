@@ -10,9 +10,9 @@ import { addServerColumns } from '../database/updateDatabase.js';
 import { clearResourceAlertState, isSmtpNotificationTarget, sendNotification } from '../services/notification.js';
 import { getNotificationMessages } from '../services/notificationMessages.js';
 import { HISTORY_PARTITION_PICK_SQL, insertServerWithPartition } from '../database/indexOptimization.js';
-import { isValidTrafficCorrection, normalizeConnectionMode, normalizePingMode, normalizeWssReportInterval, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
+import { isValidTrafficCorrection, normalizeConnectionMode, normalizePingMode, normalizeResetTime, normalizeTimezone, normalizeWssReportInterval, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
 import { scheduleAgentConfigChanged, scheduleAgentReportModeChanged } from '../utils/agentConfigNotify.js';
-import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
+import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded, renewExpireDateTimeIfNeeded, resolveExpireAt } from '../utils/serverBilling.js';
 import { THEME_PREVIEW_AUTH_TTL_SECONDS } from '../utils/config.js';
 
 const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'node_1', 'node_2', 'node_3', 'node_4'];
@@ -28,11 +28,11 @@ const IMPORT_SERVER_SQL = `
     FROM pref
   )
   INSERT INTO servers (id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal,
-    currency, expire_date,
-    traffic_limit, traffic_calc_type, "interface", reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode,
+    currency, expire_date, expire_at,
+    traffic_limit, traffic_calc_type, "interface", reset_day, reset_time, timezone, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode,
     auto_update, custom_ct, custom_cu, custom_cm, custom_bd, node_1, node_2, node_3, node_4, rx_correction, tx_correction,
     offline_notify_disabled, is_hidden, sort_order, history_partition_id, timestamp, traffic_alert_percent)
-  SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, pid, ?, ?
+  SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, pid, ?, ?
   FROM next
   WHERE pid IS NOT NULL
 `;
@@ -60,16 +60,30 @@ function normalizeServerBillingData(data = {}) {
   const billingCycle = normalizeBillingCycle(data.billing_cycle || detectBillingCycle(data.price));
   const autoRenewal = normalizeBooleanFlag(data.auto_renewal);
 
+  // expire_at 优先；为空则用 expire_date 当天 00:00。写库时两个字段都写，
+  // expire_date 写 expire_at 的日期部分，保持老逻辑和老展示兼容。
+  const resolvedExpireAt = resolveExpireAt({ expire_at: data.expire_at, expire_date: data.expire_date });
+  let expireAt = '';
+  let expireDate = '';
+  if (resolvedExpireAt) {
+    const renewal = renewExpireDateTimeIfNeeded(resolvedExpireAt, billingCycle, autoRenewal);
+    expireAt = renewal.expire_at;
+    expireDate = expireAt.slice(0, 10);
+  } else {
+    expireDate = renewExpireDateIfNeeded(
+      data.expire_date || '',
+      billingCycle,
+      autoRenewal
+    ).expire_date;
+  }
+
   return {
     price: normalizePrice(data.price),
     billing_cycle: billingCycle,
     auto_renewal: autoRenewal,
     currency: normalizeCurrency(data.currency || detectCurrencySymbol(data.price) || '¥'),
-    expire_date: renewExpireDateIfNeeded(
-      data.expire_date || '',
-      billingCycle,
-      autoRenewal
-    ).expire_date
+    expire_date: expireDate,
+    expire_at: expireAt
   };
 }
 
@@ -1131,7 +1145,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       });
     }
     else if (data.action === 'edit') {
-      const { id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, traffic_alert_percent, interface: networkInterfaceInput, reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, node_1, node_2, node_3, node_4, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
+      const { id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, expire_at, traffic_limit, traffic_calc_type, traffic_alert_percent, interface: networkInterfaceInput, reset_day, reset_time, timezone, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, node_1, node_2, node_3, node_4, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
       if (!id || !isValidUUID(id)) {
         return createBadRequestResponse('invalidServerId');
       }
@@ -1141,6 +1155,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         report_interval,
         wss_report_interval,
         reset_day,
+        reset_time,
+        timezone,
         connection_mode: effectiveConnectionMode,
         ping_mode
       });
@@ -1180,13 +1196,14 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         billing_cycle,
         auto_renewal,
         currency,
-        expire_date
+        expire_date,
+        expire_at
       });
       
       try {
         await env.DB.prepare(`
           UPDATE servers
-          SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, "interface" = ?, reset_day = ?, collect_interval = ?, report_interval = ?, wss_report_interval = ?, connection_mode = ?, ping_mode = ?, auto_update = ?, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, node_1 = ?, node_2 = ?, node_3 = ?, node_4 = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?, traffic_alert_percent = ?
+          SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, expire_at = ?, traffic_limit = ?, traffic_calc_type = ?, "interface" = ?, reset_day = ?, reset_time = ?, timezone = ?, collect_interval = ?, report_interval = ?, wss_report_interval = ?, connection_mode = ?, ping_mode = ?, auto_update = ?, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, node_1 = ?, node_2 = ?, node_3 = ?, node_4 = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?, traffic_alert_percent = ?
           WHERE id = ?
         `).bind(
           name || '',
@@ -1199,10 +1216,13 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
           billingData.auto_renewal,
           billingData.currency,
           billingData.expire_date,
+          billingData.expire_at,
           traffic_limit || '',
           traffic_calc_type || 'total',
           networkInterfaces.value,
           normalizedAgentConfig.reset_day,
+          normalizedAgentConfig.reset_time,
+          normalizedAgentConfig.timezone,
           normalizedAgentConfig.collect_interval,
           normalizedAgentConfig.report_interval,
           normalizedAgentConfig.wss_report_interval,
@@ -1350,10 +1370,13 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
             billingData.auto_renewal,
             billingData.currency,
             billingData.expire_date,
+            billingData.expire_at,
             server.traffic_limit || '',
             server.traffic_calc_type || 'total',
             networkInterfaces.value,
             server.reset_day ?? 1,
+            normalizeResetTime(server.reset_time),
+            normalizeTimezone(server.timezone),
             server.collect_interval ?? 0,
             server.report_interval ?? 60,
             normalizeWssReportInterval(server.wss_report_interval),

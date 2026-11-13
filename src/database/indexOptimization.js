@@ -110,15 +110,15 @@ const SERVER_INSERT_SQL = `
     FROM pref
   )
   INSERT INTO servers
-    (id, name, server_group, region, "interface", sort_order, history_partition_id, timestamp)
-  SELECT ?, ?, ?, ?, ?, sort_order, pid, ?
+    (id, name, server_group, region, "interface", reset_time, timezone, expire_at, expire_date, sort_order, history_partition_id, timestamp)
+  SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, sort_order, pid, ?
   FROM next
   WHERE pid IS NOT NULL
 `;
 
-export async function insertServerWithPartition(db, { id, name, group = 'Default', region = '', iface = '' }) {
+export async function insertServerWithPartition(db, { id, name, group = 'Default', region = '', iface = '', resetTime = '00:00:00', timezone = '', expireAt = '', expireDate = '' }) {
   const result = await db.prepare(SERVER_INSERT_SQL)
-    .bind(0, id, name, group, region, iface, Date.now())
+    .bind(0, id, name, group, region, iface, resetTime, timezone, expireAt, expireDate, Date.now())
     .run();
   // 900 个分区全被占用时 SELECT 不返回行，changes 为 0；与旧的抛错行为保持一致。
   // 只在明确的 0 行写入时抛错：缺少 meta 的返回值（测试替身、包装层）不能当成失败。

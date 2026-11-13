@@ -57,7 +57,14 @@
 
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.expirationDate }}</label>
-          <input type="date" name="edit_expire_date" autocomplete="off" v-model="editForm.expire_date" class="form-input" @click="openDatePicker">
+          <input type="datetime-local" step="1" name="edit_expire_at" autocomplete="off" v-model="editForm.expire_at_local" class="form-input" @click="openDatePicker">
+        </div>
+
+        <div class="form-group flex-1">
+          <label class="form-label">{{ trans.billingTimezone }}</label>
+          <select v-model="editForm.timezone" class="form-select">
+            <option v-for="zone in billingTimezoneOptions" :key="zone || 'local'" :value="zone">{{ zone || trans.billingTimezoneLocal || 'Local' }}</option>
+          </select>
         </div>
       </div>
 
@@ -84,6 +91,10 @@
             <option :value="0">0</option>
             <option v-for="day in 31" :key="day" :value="day">{{ day }}</option>
           </select>
+        </div>
+        <div class="form-group flex-1">
+          <label class="form-label">{{ trans.trafficResetTime }}</label>
+          <input type="time" step="1" name="edit_reset_time" autocomplete="off" v-model="editForm.reset_time" class="form-input">
         </div>
         <div class="form-group flex-1">
           <label class="form-label">
@@ -275,7 +286,7 @@ import { computed, watch } from 'vue'
 import HelpTooltip from '../../../components/HelpTooltip.vue'
 import { PING_NODE_FIELDS, validatePingNode } from '../../../utils/pingNode.js'
 import { currentLang } from '../../../utils/i18n.js'
-import { BILLING_CYCLES, CURRENCY_OPTIONS, getLocalizedOptionField, normalizePrice, renewExpireDateIfNeeded } from '../../../utils/server.js'
+import { BILLING_CYCLES, CURRENCY_OPTIONS, getLocalizedOptionField, isoToLocalInput, localInputToIso, normalizePrice, renewExpireDateTimeIfNeeded } from '../../../utils/server.js'
 
 const editForm = defineModel('editForm', { type: Object, required: true })
 
@@ -312,6 +323,8 @@ const currencySelectOptions = computed(() => {
   ]
 })
 
+const billingTimezoneOptions = ['', 'UTC', 'Asia/Shanghai', 'Asia/Tokyo', 'America/Los_Angeles', 'America/New_York', 'Europe/London', 'Australia/Sydney']
+
 const cycleLabel = (item) => getLocalizedOptionField(item, 'label', currentLang.value)
 const currencyLabel = (item) => `${item.symbol} ${getLocalizedOptionField(item, 'name', currentLang.value)}`
 
@@ -346,17 +359,30 @@ const openDatePicker = (event) => {
   } catch (_) {}
 }
 
+// 时区变化时，expire_at_local 按新时区重新换算显示（同一绝对时刻，换墙上时间）
 watch(
-  () => [editForm.value.auto_renewal, editForm.value.billing_cycle, editForm.value.expire_date],
+  () => editForm.value.timezone,
+  (newTimezone, oldTimezone) => {
+    if (!editForm.value.expire_at_local || newTimezone === oldTimezone) return
+    const iso = localInputToIso(editForm.value.expire_at_local, oldTimezone || '')
+    if (!iso) return
+    editForm.value.expire_at_local = isoToLocalInput(iso, newTimezone || '')
+  }
+)
+
+watch(
+  () => [editForm.value.auto_renewal, editForm.value.billing_cycle, editForm.value.expire_at_local, editForm.value.timezone],
   () => {
-    if (!editForm.value.auto_renewal) return
-    const renewal = renewExpireDateIfNeeded(
-      editForm.value.expire_date,
+    if (!editForm.value.auto_renewal || !editForm.value.expire_at_local) return
+    const iso = localInputToIso(editForm.value.expire_at_local, editForm.value.timezone)
+    if (!iso) return
+    const renewal = renewExpireDateTimeIfNeeded(
+      iso,
       editForm.value.billing_cycle,
       editForm.value.auto_renewal
     )
     if (renewal.renewed) {
-      editForm.value.expire_date = renewal.expire_date
+      editForm.value.expire_at_local = isoToLocalInput(renewal.expire_at, editForm.value.timezone)
     }
   }
 )

@@ -244,6 +244,201 @@ export function renewExpireDateIfNeeded(expireDate, billingCycle, autoRenewal, n
   return { expire_date: nextDate, renewed };
 }
 
+// ---- 到期时刻（ISO 日期时间，schema 8）：与后端 src/utils/serverBilling.js 同款逻辑 ----
+// expire_at 是完整 ISO 日期时间，可带数字时区偏移（如 2027-04-10T15:30:00+08:00）；
+// 无偏移时按本地墙上时间理解。老数据只有 expire_date 时按当天 00:00 处理。
+const ISO_DATETIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?\s*(Z|[+-]\d{2}:?\d{2})?$/;
+
+function parseExpireAtParts(value) {
+  const match = String(value || '').trim().match(ISO_DATETIME_PATTERN);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6] || '00');
+  const offsetRaw = match[7] || '';
+
+  const probe = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  if (
+    probe.getUTCFullYear() !== year ||
+    probe.getUTCMonth() !== month - 1 ||
+    probe.getUTCDate() !== day ||
+    probe.getUTCHours() !== hour ||
+    probe.getUTCMinutes() !== minute ||
+    probe.getUTCSeconds() !== second
+  ) {
+    return null;
+  }
+
+  let offsetMinutes = null;
+  let offsetText = '';
+  if (offsetRaw === 'Z') {
+    offsetMinutes = 0;
+    offsetText = 'Z';
+  } else if (offsetRaw) {
+    const offsetMatch = offsetRaw.match(/^([+-])(\d{2}):?(\d{2})$/);
+    if (!offsetMatch) return null;
+    const sign = offsetMatch[1] === '-' ? -1 : 1;
+    offsetMinutes = sign * (Number(offsetMatch[2]) * 60 + Number(offsetMatch[3]));
+    if (Math.abs(offsetMinutes) > 14 * 60) return null;
+    offsetText = `${offsetMatch[1]}${offsetMatch[2]}:${offsetMatch[3]}`;
+  }
+
+  return { year, month, day, hour, minute, second, offsetMinutes, offsetText };
+}
+
+function formatTimePart(hour, minute, second) {
+  return [hour, minute, second].map(value => String(value).padStart(2, '0')).join(':');
+}
+
+export function parseExpireAt(value) {
+  const parts = parseExpireAtParts(value);
+  if (!parts) return null;
+  const canonical = `${toDateString(parts.year, parts.month, parts.day)}T${formatTimePart(parts.hour, parts.minute, parts.second)}${parts.offsetText || ''}`;
+  const ms = Date.parse(canonical);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+export function resolveExpireAt(server) {
+  const raw = String(server?.expire_at || '').trim();
+  if (raw && parseExpireAt(raw) !== null) return raw;
+
+  const date = String(server?.expire_date || '').trim();
+  if (!parseDateOnly(date)) return '';
+  return `${date}T00:00:00`;
+}
+
+function addBillingCycleToDateTime(isoString, billingCycle) {
+  const parts = parseExpireAtParts(isoString);
+  if (!parts) return String(isoString || '').trim();
+
+  const monthsToAdd = getBillingCycleOption(billingCycle).months;
+  const zeroBasedMonth = parts.month - 1 + monthsToAdd;
+  const year = parts.year + Math.floor(zeroBasedMonth / 12);
+  const month = ((zeroBasedMonth % 12) + 12) % 12 + 1;
+  // 保留原来的时分秒，只加月数；日期溢出时按当月最后一天 clamp
+  const day = Math.min(parts.day, daysInUtcMonth(year, month));
+
+  return `${toDateString(year, month, day)}T${formatTimePart(parts.hour, parts.minute, parts.second)}${parts.offsetText || ''}`;
+}
+
+export function renewExpireDateTimeIfNeeded(expireAt, billingCycle, autoRenewal, now = Date.now(), renewBeforeDays = 0) {
+  const original = String(expireAt || '').trim();
+  if (!original || parseExpireAt(original) === null || !isEnabledFlag(autoRenewal)) {
+    return { expire_at: original, renewed: false };
+  }
+
+  let next = original;
+  let nextMs = parseExpireAt(next);
+  const thresholdMs = now + (Number(renewBeforeDays) || 0) * 86400000;
+  let renewed = false;
+  let guard = 0;
+
+  while (nextMs !== null && nextMs <= thresholdMs && guard < 1200) {
+    next = addBillingCycleToDateTime(next, billingCycle);
+    nextMs = parseExpireAt(next);
+    renewed = true;
+    guard++;
+  }
+
+  return { expire_at: next, renewed };
+}
+
+// ---- ISO 日期时间与 datetime-local 输入框、计费时区之间的换算 ----
+// isoToLocalInput：把存储的 ISO（带时区偏移）换算成所选时区的墙上时间 "YYYY-MM-DDTHH:MM:SS"；
+// tz 为空表示浏览器本地时区。localInputToIso：反向，把墙上时间按所选时区拼回带偏移的 ISO。
+const pad2 = (value) => String(value).padStart(2, '0');
+
+function getZonedWallParts(timestamp, timeZone) {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour12: false,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+  return Object.fromEntries(
+    formatter.formatToParts(new Date(timestamp)).map(part => [part.type, part.value])
+  );
+}
+
+function getTimezoneOffsetMs(timestamp, timeZone) {
+  const parts = getZonedWallParts(timestamp, timeZone);
+  const wallAsUtc = Date.UTC(
+    Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+    Number(parts.hour), Number(parts.minute), Number(parts.second)
+  );
+  return wallAsUtc - timestamp;
+}
+
+function formatTimezoneOffset(offsetMs) {
+  const sign = offsetMs < 0 ? '-' : '+';
+  const abs = Math.abs(offsetMs);
+  return `${sign}${pad2(Math.floor(abs / 3600000))}:${pad2(Math.floor((abs % 3600000) / 60000))}`;
+}
+
+export function isoToLocalInput(iso, timeZone) {
+  const raw = String(iso || '').trim();
+  if (!raw) return '';
+  const ms = parseExpireAt(raw);
+  if (ms === null) {
+    const dateOnly = raw.match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
+    return dateOnly ? `${dateOnly}T00:00:00` : '';
+  }
+
+  const tz = String(timeZone || '').trim();
+  if (!tz) {
+    const date = new Date(ms);
+    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+  }
+
+  try {
+    const parts = getZonedWallParts(ms, tz);
+    return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`;
+  } catch (_) {
+    const date = new Date(ms);
+    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+  }
+}
+
+export function localInputToIso(local, timeZone) {
+  const match = String(local || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (!match) return '';
+  const year = match[1];
+  const month = match[2];
+  const day = match[3];
+  const hour = match[4] || '00';
+  const minute = match[5] || '00';
+  const second = match[6] || '00';
+
+  const tz = String(timeZone || '').trim();
+  if (!tz) {
+    const date = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
+    if (Number.isNaN(date.getTime())) return '';
+    return `${year}-${month}-${day}T${hour}:${minute}:${second}${formatTimezoneOffset(-date.getTimezoneOffset() * 60000)}`;
+  }
+
+  try {
+    // 先按 UTC 拼墙上时间，再用该时区在该日期的偏移量反推（算两次，覆盖夏令时边界）
+    const guessUtc = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
+    let offset = getTimezoneOffsetMs(guessUtc, tz);
+    let utcMs = guessUtc - offset;
+    offset = getTimezoneOffsetMs(utcMs, tz);
+    utcMs = guessUtc - offset;
+    if (Number.isNaN(utcMs)) return '';
+    return `${year}-${month}-${day}T${hour}:${minute}:${second}${formatTimezoneOffset(offset)}`;
+  } catch (_) {
+    return '';
+  }
+}
+
 const OPTION_FIELD_LANGUAGE_SUFFIX = Object.freeze({ zh: 'Zh', 'zh-TW': 'ZhTw', en: 'En', es: 'Es' });
 
 export function getLocalizedOptionField(option, field, lang) {

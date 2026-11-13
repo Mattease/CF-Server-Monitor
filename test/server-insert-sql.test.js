@@ -22,6 +22,10 @@ await db.prepare(`
     server_group TEXT,
     region TEXT,
     "interface" TEXT,
+    reset_time TEXT DEFAULT '00:00:00',
+    timezone TEXT DEFAULT '',
+    expire_at TEXT DEFAULT '',
+    expire_date TEXT DEFAULT '',
     sort_order INTEGER,
     history_partition_id INTEGER,
     timestamp INTEGER

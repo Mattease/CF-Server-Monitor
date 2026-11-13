@@ -3,7 +3,7 @@ import { formatBytes, getFlagRegionCode, isServerOnline } from '../utils/api'
 import { getPublicAssetUrl } from '../utils/config'
 import { currentLang, useTranslation } from '../utils/i18n'
 import { LATENCY_WINDOW, PING } from '../utils/constants'
-import { formatBillingPrice } from '../utils/server.js'
+import { formatBillingPrice, parseExpireAt } from '../utils/server.js'
 
 export const DEFAULT_SERVER_CARD_CONFIG = {
   show_price: true,
@@ -192,8 +192,29 @@ export function useServerCardData(props) {
     ].join('-')
   }
 
+  // 到期时刻优先用 expire_at（绝对时刻），没有才用 expire_date 当天 00:00；
+  // 有 expire_at 时标题带时分秒，只有 expire_date 时只显示日期。
+  const expireAtMs = () => parseExpireAt(props.server.expire_at)
+
+  const expireTimeMs = () => {
+    const atMs = expireAtMs()
+    if (atMs !== null) return atMs
+    const dateMs = new Date(props.server.expire_date).getTime()
+    return Number.isNaN(dateMs) ? NaN : dateMs
+  }
+
+  const formatExpireTitle = () => {
+    const raw = String(props.server.expire_at || '').trim()
+    if (raw && parseExpireAt(raw) !== null) {
+      const match = raw.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/)
+      if (match) return `${match[1]} ${match[2]}`
+      return raw.slice(0, 10)
+    }
+    return formatDateOnly(props.server.expire_date)
+  }
+
   const expireDateTitle = computed(() => {
-    const expireDate = formatDateOnly(props.server.expire_date)
+    const expireDate = formatExpireTitle()
     return expireDate ? `${trans.value.expirationDate || 'Expiration Date'}: ${expireDate}` : ''
   })
 
@@ -248,12 +269,12 @@ export function useServerCardData(props) {
   const diskUsageText = computed(() => formatMetricUsage(props.server.disk_used, props.server.disk_total))
 
   const isExpired = computed(() => {
-    const expTime = new Date(props.server.expire_date).getTime()
+    const expTime = expireTimeMs()
     return !isNaN(expTime) && expTime < currentTime.value
   })
 
   const expireText = computed(() => {
-    const expTime = new Date(props.server.expire_date).getTime()
+    const expTime = expireTimeMs()
     if (isNaN(expTime)) return ''
     const diff = expTime - currentTime.value
     const days = Math.ceil(diff / (1000 * 3600 * 24))

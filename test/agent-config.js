@@ -3,10 +3,13 @@ import { createHash } from 'node:crypto';
 import {
   AGENT_CONFIG_CONNECTION_MODE_SCHEMA_VERSION,
   AGENT_CONFIG_LEGACY_SCHEMA_VERSION,
+  AGENT_CONFIG_RESET_TIME_SCHEMA_VERSION,
   AGENT_CONFIG_SCHEMA_VERSION,
   buildAgentConfig,
   describeAgentConfig,
   isValidTrafficCorrection,
+  normalizeResetTime,
+  normalizeTimezone,
   serializeAgentConfig,
   serializeCorrection,
   validateAgentConfigInput,
@@ -22,8 +25,8 @@ const server = {
   reset_day: 15,
   ping_mode: 'tcp'
 };
-const expected = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=7&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&node_1=&node_2=&node_3=&node_4=&connection_mode=http&ping_mode=tcp';
-const expectedWssEnabled = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=7&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&node_1=&node_2=&node_3=&node_4=&connection_mode=auto&wss_report_interval=2&ping_mode=tcp';
+const expected = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=8&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&node_1=&node_2=&node_3=&node_4=&connection_mode=http&ping_mode=tcp&reset_time=00:00:00&timezone=';
+const expectedWssEnabled = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=8&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&node_1=&node_2=&node_3=&node_4=&connection_mode=auto&wss_report_interval=2&ping_mode=tcp&reset_time=00:00:00&timezone=';
 const expectedLegacy = 'collect_interval=1&report_interval=60&reset_day=15&schema_version=3&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=';
 
 const config = buildAgentConfig(server);
@@ -100,7 +103,9 @@ assert.deepEqual(buildAgentConfig({}), {
   node_3: '',
   node_4: '',
   connection_mode: 'http',
-  ping_mode: 'tcp'
+  ping_mode: 'tcp',
+  reset_time: '00:00:00',
+  timezone: ''
 });
 assert.equal(buildAgentConfig({ ping_mode: 'icmp' }).ping_mode, 'icmp');
 assert.equal(buildAgentConfig({ ping_mode: 'bad' }).ping_mode, 'tcp');
@@ -227,5 +232,47 @@ assert.equal(validatePingNode('foo:bar').valid, false);
 assert.deepEqual(validatePingNode('2001:db8::1'), { valid: true, value: '[2001:db8::1]' });
 assert.deepEqual(validatePingNode('[2001:db8::1]:443'), { valid: true, value: '[2001:db8::1]:443' });
 assert.deepEqual(validatePingNode('2001:db8::1:443'), { valid: true, value: '[2001:db8::1:443]' });
+
+// schema 8：流量重置时间 + 计费时区
+assert.equal(AGENT_CONFIG_SCHEMA_VERSION, 8);
+assert.equal(AGENT_CONFIG_RESET_TIME_SCHEMA_VERSION, 8);
+assert.equal(normalizeResetTime(''), '00:00:00');
+assert.equal(normalizeResetTime(undefined), '00:00:00');
+assert.equal(normalizeResetTime('3:04:05'), '03:04:05');
+assert.equal(normalizeResetTime('15:30:00'), '15:30:00');
+assert.equal(normalizeResetTime('24:00:00'), '00:00:00');
+assert.equal(normalizeResetTime('12:60:00'), '00:00:00');
+assert.equal(normalizeResetTime('12:00:60'), '00:00:00');
+assert.equal(normalizeResetTime('abc'), '00:00:00');
+assert.equal(normalizeTimezone(''), '');
+assert.equal(normalizeTimezone(undefined), '');
+assert.equal(normalizeTimezone('America/Los_Angeles'), 'America/Los_Angeles');
+assert.equal(normalizeTimezone('UTC'), 'UTC');
+assert.equal(normalizeTimezone(' Asia/Shanghai '), 'Asia/Shanghai');
+assert.equal(normalizeTimezone('bad tz!'), '');
+assert.equal(normalizeTimezone('a'.repeat(65)), '');
+
+// schema 7 的老探针不下发 reset_time/timezone
+const v7Config = buildAgentConfig({ reset_time: '15:30:00', timezone: 'Asia/Shanghai' }, null, 7);
+assert.equal(Object.prototype.hasOwnProperty.call(v7Config, 'reset_time'), false);
+assert.equal(Object.prototype.hasOwnProperty.call(v7Config, 'timezone'), false);
+assert.equal(serializeAgentConfig(v7Config).includes('reset_time'), false);
+assert.equal(serializeAgentConfig(v7Config).includes('timezone'), false);
+
+// schema 8：reset_time 的冒号不编码，timezone 的 / 必须 percent-encode
+const v8Config = buildAgentConfig({ reset_time: '15:30:00', timezone: 'America/Los_Angeles' });
+assert.equal(v8Config.reset_time, '15:30:00');
+assert.equal(v8Config.timezone, 'America/Los_Angeles');
+assert.match(serializeAgentConfig(v8Config), /&reset_time=15:30:00&timezone=America%2FLos_Angeles$/);
+
+// validateAgentConfigInput：合法值进 config，非法拒绝（与 reset_day 同款）
+const validResetInput = validateAgentConfigInput({ ...server, reset_time: '15:30:00', timezone: 'Asia/Tokyo' });
+assert.equal(validResetInput.valid, true);
+assert.equal(validResetInput.config.reset_time, '15:30:00');
+assert.equal(validResetInput.config.timezone, 'Asia/Tokyo');
+assert.equal(validateAgentConfigInput({ ...server, reset_time: '25:00:00' }).valid, false);
+assert.equal(validateAgentConfigInput({ ...server, timezone: 'bad tz!' }).valid, false);
+assert.equal(validateAgentConfigInput({ ...server }).config.reset_time, '00:00:00');
+assert.equal(validateAgentConfigInput({ ...server }).config.timezone, '');
 
 console.log('agent config tests passed');

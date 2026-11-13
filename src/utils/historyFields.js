@@ -75,6 +75,7 @@ export const BROADCAST_DELETE_FIELDS = Object.freeze([
   'cpu_info',
   'cpu_cores',
   'expire_date',
+  'expire_at',
   'server_group',
   'traffic_limit',
   'net_rx_monthly',

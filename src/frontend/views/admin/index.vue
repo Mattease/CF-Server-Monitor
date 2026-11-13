@@ -621,7 +621,7 @@ import { applyMikusThemeOptions } from '../../utils/themeOptions.js'
 import { FRONTEND_WS_TIMEOUT_MINUTES_MAX, HISTORY, STORAGE } from '../../utils/constants.js'
 import { usePasswordVisibility } from '../../composables/usePasswordVisibility'
 import { useTurnstile } from './composables/useTurnstile'
-import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../../utils/server.js'
+import { detectBillingCycle, detectCurrencySymbol, isoToLocalInput, localInputToIso, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateTimeIfNeeded } from '../../utils/server.js'
 
 const trans = useTranslation()
 const route = useRoute()
@@ -1058,11 +1058,15 @@ const editForm = ref({
   auto_renewal: false,
   currency: '¥',
   expire_date: '',
+  expire_at: '',
+  expire_at_local: '',
   traffic_limit: '',
   traffic_calc_type: 'total',
   traffic_alert_percent: null,
   interface: '',
   reset_day: 1,
+  reset_time: '00:00:00',
+  timezone: '',
   collect_interval: 0,
   report_interval: 60,
   wss_report_interval: 2,
@@ -1089,11 +1093,15 @@ const createBatchEditDefaults = () => ({
   auto_renewal: false,
   currency: '¥',
   expire_date: '',
+  expire_at: '',
+  expire_at_local: '',
   traffic_limit: '',
   traffic_calc_type: 'total',
   traffic_alert_percent: null,
   interface: '',
   reset_day: 1,
+  reset_time: '00:00:00',
+  timezone: '',
   collect_interval: 0,
   report_interval: 60,
   wss_report_interval: 2,
@@ -2113,11 +2121,18 @@ const createEditFormFromServer = (server) => ({
     auto_renewal: server.auto_renewal === '1' || server.auto_renewal === 1 || server.auto_renewal === true,
     currency: normalizeCurrency(server.currency || detectCurrencySymbol(server.price) || '¥'),
     expire_date: server.expire_date || '',
+    expire_at: server.expire_at || '',
+    expire_at_local: isoToLocalInput(
+      server.expire_at || (server.expire_date ? `${server.expire_date}T00:00:00` : ''),
+      server.timezone || ''
+    ),
     traffic_limit: server.traffic_limit || '',
     traffic_calc_type: server.traffic_calc_type || 'total',
     traffic_alert_percent: server.traffic_alert_percent ?? '',
     interface: server.interface || '',
     reset_day: server.reset_day ?? 1,
+    reset_time: server.reset_time || '00:00:00',
+    timezone: server.timezone || '',
     collect_interval: server.collect_interval ?? 0,
     report_interval: server.report_interval || 60,
     wss_report_interval: server.wss_report_interval || 2,
@@ -2179,11 +2194,13 @@ const buildEditPayloadFromForm = (form) => {
   const normalizedAutoRenewal = form.auto_renewal ? '1' : '0'
   const normalizedPrice = normalizePrice(form.price)
   const normalizedCurrency = normalizeCurrency(form.currency || detectCurrencySymbol(form.price) || '¥')
-  const normalizedExpireDate = renewExpireDateIfNeeded(
-    form.expire_date,
-    normalizedBillingCycle,
-    normalizedAutoRenewal
-  ).expire_date
+  // 到期时刻以 datetime-local 输入为准：按所选计费时区换算成 ISO；为空则到期时间置空。
+  // 只填了日期没填时间时 localInputToIso 默认 00:00:00。自动续费预览同样按时刻推进。
+  const expireAtIso = form.expire_at_local ? localInputToIso(form.expire_at_local, form.timezone) : ''
+  const normalizedExpireAt = expireAtIso
+    ? renewExpireDateTimeIfNeeded(expireAtIso, normalizedBillingCycle, normalizedAutoRenewal).expire_at
+    : ''
+  const normalizedExpireDate = normalizedExpireAt ? normalizedExpireAt.slice(0, 10) : ''
 
   return {
     payload: {
@@ -2199,11 +2216,14 @@ const buildEditPayloadFromForm = (form) => {
       auto_renewal: normalizedAutoRenewal,
       currency: normalizedCurrency,
       expire_date: normalizedExpireDate,
+      expire_at: normalizedExpireAt,
       traffic_limit: form.traffic_limit,
       traffic_calc_type: form.traffic_calc_type,
       traffic_alert_percent: normalizeTrafficAlertPercentField(form.traffic_alert_percent),
       interface: form.interface,
       reset_day: form.reset_day,
+      reset_time: form.reset_time || '00:00:00',
+      timezone: form.timezone || '',
       collect_interval: form.collect_interval,
       report_interval: form.report_interval,
       wss_report_interval: form.wss_report_interval,
@@ -2224,7 +2244,8 @@ const buildEditPayloadFromForm = (form) => {
       price: normalizedPrice,
       currency: normalizedCurrency,
       billing_cycle: normalizedBillingCycle,
-      expire_date: normalizedExpireDate
+      expire_date: normalizedExpireDate,
+      expire_at: normalizedExpireAt
     }
   }
 }
@@ -2242,16 +2263,20 @@ const saveEdit = async () => {
   const normalizedAutoRenewal = editForm.value.auto_renewal ? '1' : '0'
   const normalizedPrice = normalizePrice(editForm.value.price)
   const normalizedCurrency = normalizeCurrency(editForm.value.currency || detectCurrencySymbol(editForm.value.price) || '¥')
-  const normalizedExpireDate = renewExpireDateIfNeeded(
-    editForm.value.expire_date,
-    normalizedBillingCycle,
-    normalizedAutoRenewal
-  ).expire_date
+  const expireAtIso = editForm.value.expire_at_local ? localInputToIso(editForm.value.expire_at_local, editForm.value.timezone) : ''
+  const normalizedExpireAt = expireAtIso
+    ? renewExpireDateTimeIfNeeded(expireAtIso, normalizedBillingCycle, normalizedAutoRenewal).expire_at
+    : ''
+  const normalizedExpireDate = normalizedExpireAt ? normalizedExpireAt.slice(0, 10) : ''
 
   editForm.value.price = normalizedPrice
   editForm.value.currency = normalizedCurrency
   editForm.value.billing_cycle = normalizedBillingCycle
   editForm.value.expire_date = normalizedExpireDate
+  editForm.value.expire_at = normalizedExpireAt
+  if (normalizedExpireAt) {
+    editForm.value.expire_at_local = isoToLocalInput(normalizedExpireAt, editForm.value.timezone)
+  }
 
   const data = {
     action: 'edit',
@@ -2266,11 +2291,14 @@ const saveEdit = async () => {
     auto_renewal: normalizedAutoRenewal,
     currency: normalizedCurrency,
     expire_date: normalizedExpireDate,
+    expire_at: normalizedExpireAt,
     traffic_limit: editForm.value.traffic_limit,
     traffic_calc_type: editForm.value.traffic_calc_type,
     traffic_alert_percent: normalizeTrafficAlertPercentField(editForm.value.traffic_alert_percent),
     interface: editForm.value.interface,
     reset_day: editForm.value.reset_day,
+    reset_time: editForm.value.reset_time || '00:00:00',
+    timezone: editForm.value.timezone || '',
     collect_interval: editForm.value.collect_interval,
     report_interval: editForm.value.report_interval,
     wss_report_interval: editForm.value.wss_report_interval,
