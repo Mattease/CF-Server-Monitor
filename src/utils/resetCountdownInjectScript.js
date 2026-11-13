@@ -1,4 +1,8 @@
-/* SAO 主题流量重置倒计时注入（kuskure 注入，非 SAO 原生代码）。
+// 流量重置倒计时注入脚本（Worker 端注入外部主题时使用）。
+// 由 src/handlers/frontend.js 在返回外部主题（theme_url）HTML 时，包进 <script> 插到 </body> 前。
+// 与面板 src/frontend/utils/server.js 的 daysUntilNextReset 算法一致。
+// 本文件是唯一来源；改动直接改这里（注意：内容含在模板字符串里，不能出现反引号与 ${）。
+export const RESET_COUNTDOWN_INJECT_SCRIPT = `/* SAO 主题流量重置倒计时注入（kuskure 注入，非 SAO 原生代码）。
  * 由面板部署流程注入到 SAO index.html；不改 SAO 仓库。
  * 逻辑：拉 /api/servers 取每台的 reset_day/reset_time/timezone，
  * 按探针算法算下次重置剩余天数，注入到各卡片的流量值旁。
@@ -85,9 +89,23 @@
   // ---- 拉服务器重置配置 ----
   var resetByUuid = {};   // uuid -> {days, text}
   var resetByName = {};   // name -> {days, text}
+  function apiBasePrefix() {
+    try {
+      var meta = document.querySelector('meta[name="apiBase"]');
+      var base = meta && meta.content ? String(meta.content).trim() : '';
+      return base ? base.replace(/\/+$/, '') : '';
+    } catch (e) { return ''; }
+  }
   function refreshResetData() {
-    return fetch('/api/servers', { credentials: 'same-origin' })
-      .then(function (r) { return r.json(); })
+    var headers = {};
+    try {
+      var tv = localStorage.getItem('turnstile_verified');
+      if (tv) headers['X-Turnstile-Verified'] = tv;
+      var jwt = localStorage.getItem('jwt_token');
+      if (jwt) headers['Authorization'] = 'Bearer ' + jwt;
+    } catch (e) { /* localStorage 不可用时忽略 */ }
+    return fetch(apiBasePrefix() + '/api/servers', { credentials: 'same-origin', headers: headers })
+      .then(function (r) { if (!r.ok) throw new Error('servers HTTP ' + r.status); return r.json(); })
       .then(function (data) {
         var list = Array.isArray(data) ? data : (data.servers || data.data || []);
         resetByUuid = {};
@@ -210,18 +228,30 @@
   }
 
   var observer = null;
+  var observerScheduled = false;
+  function runObserverScan() {
+    observerScheduled = false;
+    // React 重渲染会清掉注入标记与 data 属性，重新扫描（小视图卡片 + 大视图）
+    document.querySelectorAll('article.compact-node-card, article.server-card, article[id^="node-card-"], .compact-node-card, .server-card').forEach(function (card) {
+      if (card.dataset.kuskureResetDone) {
+        // 检查注入是否还在，不在则清标记重注
+        if (!card.querySelector('[data-kuskure-reset]')) delete card.dataset.kuskureResetDone;
+      }
+      injectIntoCard(card);
+    });
+    injectIntoDetailView();
+  }
   function startObserver() {
     if (observer) return;
     observer = new MutationObserver(function () {
-      // React 重渲染会清掉注入标记与 data 属性，重新扫描（小视图卡片 + 大视图）
-      document.querySelectorAll('article.compact-node-card, article.server-card, article[id^="node-card-"], .compact-node-card, .server-card').forEach(function (card) {
-        if (card.dataset.kuskureResetDone) {
-          // 检查注入是否还在，不在则清标记重注
-          if (!card.querySelector('[data-kuskure-reset]')) delete card.dataset.kuskureResetDone;
-        }
-        injectIntoCard(card);
-      });
-      injectIntoDetailView();
+      // rAF 节流合并：SAO 经 WebSocket 高频刷新，避免每次 DOM 变动都全量扫描
+      if (observerScheduled) return;
+      observerScheduled = true;
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(runObserverScan);
+      } else {
+        setTimeout(runObserverScan, 0);
+      }
     });
     observer.observe(document.body, { childList: true, subtree: true });
   }
@@ -242,3 +272,4 @@
     init();
   }
 })();
+`;

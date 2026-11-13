@@ -13,6 +13,7 @@ import {
   injectApiBase
 } from '../utils/csp.js';
 import { checkAuth } from '../middleware/auth.js';
+import { RESET_COUNTDOWN_INJECT_SCRIPT } from '../utils/resetCountdownInjectScript.js';
 
 const IMMUTABLE_ASSET_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 const PREVIEW_COOKIE = 'cfsm_theme_preview';
@@ -117,7 +118,7 @@ function getEnvApiBases(env) {
   return parseCspOrigins(env?.API_BASE || '');
 }
 
-function injectAppearanceSettings(html, settings, env = {}) {
+function injectAppearanceSettings(html, settings, env = {}, isExternalTheme = false) {
   let modifiedHtml = stripCspMeta(html);
 
   modifiedHtml = injectTitle(modifiedHtml, settings.site_title || DEFAULT_SITE_TITLE);
@@ -145,6 +146,18 @@ function injectAppearanceSettings(html, settings, env = {}) {
       modifiedHtml = modifiedHtml.replace(/<\/body>/i, `<script>${settings.custom_script}</script>\n</body>`);
     } else {
       modifiedHtml += `\n<script>${settings.custom_script}</script>`;
+    }
+  }
+
+  // 外部主题（如 SAO）本身不显示流量重置倒计时，在 Worker 端直接注入倒计时脚本，
+  // 走 Worker 的 serveFrontend 流程，外观配置（标题/背景/CSP/主题切换）全部保留。
+  // 内置前端已有自己的倒计时实现，不注入，避免重复。
+  if (isExternalTheme && RESET_COUNTDOWN_INJECT_SCRIPT) {
+    const tag = `<script>\n${RESET_COUNTDOWN_INJECT_SCRIPT}\n</script>\n`;
+    if (/<\/body>/i.test(modifiedHtml)) {
+      modifiedHtml = modifiedHtml.replace(/<\/body>/i, `${tag}</body>`);
+    } else {
+      modifiedHtml += `\n${tag}`;
     }
   }
 
@@ -428,7 +441,8 @@ async function loadThemeIndex(themeUrl) {
 }
 
 function buildHtmlResponse(html, settings, request, env = {}, previewThemeUrl = '') {
-  const rendered = injectAppearanceSettings(html, settings, env);
+  const isExternalTheme = Boolean(previewThemeUrl || normalizeThemeUrl(settings.theme_url));
+  const rendered = injectAppearanceSettings(html, settings, env, isExternalTheme);
   const headers = new Headers({
     'Content-Type': 'text/html;charset=UTF-8',
     'X-Content-Type-Options': 'nosniff',
