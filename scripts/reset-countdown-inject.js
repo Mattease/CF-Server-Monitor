@@ -126,27 +126,35 @@
     if (!found) return;
     var rec = found.kind === 'uuid' ? resetByUuid[found.key] : resetByName[found.key];
     if (!rec) return;
-    // 找流量值元素：SAO 紧凑卡用 .compact-node-traffic-value；其它布局找含“流量”标签的行
-    var valueEl = card.querySelector('.compact-node-traffic-value');
-    if (!valueEl) {
-      // 兜底：找流量标签后最近的值元素
+    // 注入点：流量标签（.compact-node-traffic-label）后面，紧贴“流量”二字。
+    // SAO 紧凑卡有两种结构：有存续时 label 与 gauge/uptime/value 同在 .compact-node-traffic-body
+    // 里；无存续时 label 在 .compact-node-traffic-head 里。两种都直接跟在 label 后面。
+    var labelEl = card.querySelector('.compact-node-traffic-label');
+    if (!labelEl) {
+      // 兜底：找文字为“流量”的 span
       var labels = card.querySelectorAll('span');
       for (var i = 0; i < labels.length; i++) {
-        if (labels[i].textContent.trim() === '流量') {
-          var row = labels[i].closest('div');
-          if (row) valueEl = row.parentElement ? row.parentElement.querySelector('span:last-child') : null;
-          break;
-        }
+        if (labels[i].textContent.trim() === '流量') { labelEl = labels[i]; break; }
       }
     }
-    if (!valueEl) return;
+    if (!labelEl) return;
     // 已注入过则跳过（React 重渲染会清掉标记，届时重新注入）
-    if (valueEl.querySelector('[data-kuskure-reset]')) return;
+    if (labelEl.parentElement && labelEl.parentElement.querySelector('[data-kuskure-reset]')) return;
     var badge = document.createElement('span');
     badge.setAttribute('data-kuskure-reset', '1');
-    badge.textContent = ' · ' + rec.text;
-    badge.style.cssText = 'margin-left:2px;white-space:nowrap;';
-    valueEl.appendChild(badge);
+    badge.textContent = rec.text;
+    badge.style.cssText = [
+      'display:inline-flex', 'align-items:center', 'white-space:nowrap',
+      'margin-left:6px', 'padding:1px 7px', 'border-radius:999px',
+      'background:#eef2ff', 'color:#4f46e5', 'border:1px solid #c7d2fe',
+      'font-size:11px', 'line-height:16px', 'font-weight:600'
+    ].join(';');
+    // 插到 label 后面（紧贴“流量”）
+    if (labelEl.nextSibling) {
+      labelEl.parentElement.insertBefore(badge, labelEl.nextSibling);
+    } else {
+      labelEl.parentElement.appendChild(badge);
+    }
     card.dataset.kuskureResetDone = '1';
   }
   function scanAll() {
