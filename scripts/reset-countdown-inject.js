@@ -89,7 +89,8 @@
         list.forEach(function (s) {
           var days = daysUntilNextReset(s.reset_day, s.reset_time, s.timezone);
           if (days == null) return;
-          var text = days <= 0 ? '今天重置' : days + '天后重置';
+          var dayNum = parseInt(s.reset_day, 10);
+          var text = (days <= 0 ? '今天重置' : days + '天后重置') + ' · ' + dayNum + '号';
           var rec = { days: days, text: text };
           if (s.uuid) resetByUuid[s.uuid] = rec;
           if (s.id) resetByUuid[s.id] = rec;
