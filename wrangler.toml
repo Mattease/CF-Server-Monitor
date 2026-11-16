@@ -6,6 +6,9 @@ compatibility_flags = ["nodejs_compat"]
 
 keep_vars = true
 
+# 只保留 pl.kuskure.com 自定义域名入口，关掉 workers.dev 默认子域名（避免绕过区域防刷规则）
+workers_dev = false
+
 # 定时任务配置（UTC）
 # - 每分钟：执行离线节点、资源告警
 # - 每小时：合并执行其他定时任务（表轮换、旧表清理、按配置时区/小时触发服务器到期检测）
