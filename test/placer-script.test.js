@@ -143,7 +143,7 @@ test('贴标脚本在桩 DOM 上贴上倒计时并逐秒走字', async () => {
     const wrap1 = c1.label.querySelector('[data-kuskure-reset]');
     assert.ok(wrap1, 'wrapper present');
     assert.equal(wrap1.children[0].tagName, 'B');
-    assert.equal(wrap1.children[0].textContent, '·');
+    assert.equal(wrap1.children[0].textContent, '· ');
 
     const cd2 = c2.label.querySelector('[data-kuskure-cd]');
     assert.ok(cd2, 'card2 (name fallback) should get a countdown');

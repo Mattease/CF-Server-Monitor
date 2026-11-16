@@ -94,7 +94,7 @@ export const RESET_COUNTDOWN_PLACER_SCRIPT = `/* SAO 主题流量重置倒计时
     wrap.setAttribute('data-kuskure-reset', '1');
     wrap.style.cssText = 'white-space:nowrap;font-variant-numeric:tabular-nums;';
     var dot = document.createElement('b');
-    dot.textContent = '·';
+    dot.textContent = '· ';
     wrap.appendChild(dot);
     var cd = document.createElement('span');
     cd.setAttribute('data-kuskure-cd', '1');
