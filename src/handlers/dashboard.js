@@ -56,11 +56,21 @@ function normalizePublicIpFields(item, ensureFields = true) {
   return item;
 }
 
-function withoutPrivateServerFields(server) {
+function withoutPrivateServerFields(server, sys) {
   const item = { ...server };
   delete item.bandwidth;
   delete item.note;
   delete item.auto_update;
+  // 显示开关关掉时，公开数据里也一并去掉，光靠前端藏没意义（接口仍可直接读到）
+  if (sys && sys.show_price !== 'true') {
+    delete item.price;
+    delete item.billing_cycle;
+    delete item.currency;
+  }
+  if (sys && sys.show_expire !== 'true') {
+    delete item.expire_date;
+    delete item.expire_at;
+  }
   return normalizePublicIpFields(item);
 }
 
@@ -205,7 +215,7 @@ export async function handleServerAPI(request, env, sys) {
     long_history_points: Number(normalizeLongHistoryPoints(sys.long_history_points))
   };
   
-  return createSuccessResponse(omitNullLossProbeFields(withoutPrivateServerFields(server)));
+  return createSuccessResponse(omitNullLossProbeFields(withoutPrivateServerFields(server, sys)));
 }
 
 export async function handleServersAPI(request, env, sys) {
@@ -216,7 +226,7 @@ export async function handleServersAPI(request, env, sys) {
   }
   markFrontendRealtimeActive();
   
-  const results = (await getAllServers(env.DB, isLoggedIn)).map(withoutPrivateServerFields);
+  const results = (await getAllServers(env.DB, isLoggedIn)).map((server) => withoutPrivateServerFields(server, sys));
   const shouldIncludeLatencyHistory = sys.show_three_net_details === 'true';
   
   const serverIds = results.map(server => server.id).filter(Boolean);
