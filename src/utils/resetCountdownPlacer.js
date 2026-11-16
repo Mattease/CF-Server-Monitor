@@ -4,7 +4,9 @@
 // reset_next_ts（epoch 毫秒）下发（算法唯一实现在 src/shared/resetTime.js），
 // 本脚本只负责把倒计时贴到流量标签后并每秒按目标时刻重算显示，自身不做日期推算。
 // 样式：紧跟“流量”标签文字之后，继承标签的字号/字体/颜色，仅分隔符“·”加粗，无底色无边框。
-// 本文件是唯一来源；改动直接改这里（注意：脚本内容含在模板字符串里，不能出现反引号与美元花括号序列）。
+// 本文件是唯一来源；改动直接改这里（注意：脚本内容含在模板字符串里，不能出现反引号与美元花括号序列，
+// 更不能出现任何反斜杠——模板字符串会把反斜杠吃掉一层，2026-11-17 就因此把正则弄成注释、
+// 整段脚本语法错误从未运行。test/placer-script.test.js 对此有回归断言。）
 export const RESET_COUNTDOWN_PLACER_SCRIPT = `/* SAO 主题流量重置倒计时贴标（kuskure 注入，非 SAO 原生代码）。
  * 由面板 Worker 注入到 SAO index.html；不改 SAO 仓库。
  * 数据：拉 /api/servers 取每台的 reset_next_ts（服务端算好的下次重置时刻）。
@@ -20,7 +22,8 @@ export const RESET_COUNTDOWN_PLACER_SCRIPT = `/* SAO 主题流量重置倒计时
     try {
       var meta = document.querySelector('meta[name="apiBase"]');
       var base = meta && meta.content ? String(meta.content).trim() : '';
-      return base ? base.replace(/\/+$/, '') : '';
+      while (base.charAt(base.length - 1) === '/') base = base.slice(0, -1);
+      return base;
     } catch (e) { return ''; }
   }
   function refreshResetData() {
@@ -121,15 +124,29 @@ export const RESET_COUNTDOWN_PLACER_SCRIPT = `/* SAO 主题流量重置倒计时
     }
     return null;
   }
+  // 从 /server/<uuid> 形式的链接或路径里取 uuid（用字符串查找，不用正则：禁反斜杠）
+  function serverIdFromPath(path) {
+    var marker = '/server/';
+    var text = String(path || '');
+    var i = text.indexOf(marker);
+    if (i === -1) return null;
+    var rest = text.slice(i + marker.length);
+    var end = rest.length;
+    var cuts = ['/', '?', '#'];
+    for (var k = 0; k < cuts.length; k++) {
+      var j = rest.indexOf(cuts[k]);
+      if (j !== -1 && j < end) end = j;
+    }
+    var id = rest.slice(0, end);
+    if (!id) return null;
+    try { return decodeURIComponent(id); } catch (e) { return id; }
+  }
   function tsForCard(card) {
     // 优先用卡片内 /server/<uuid> 链接
     var link = card.querySelector('a[href*="/server/"]');
     if (link) {
-      var m = link.getAttribute('href').match(/\/server\/([^/?#]+)/);
-      if (m) {
-        var uuid = decodeURIComponent(m[1]);
-        if (resetByUuid[uuid]) return resetByUuid[uuid];
-      }
+      var uuid = serverIdFromPath(link.getAttribute('href'));
+      if (uuid && resetByUuid[uuid]) return resetByUuid[uuid];
       var title = (link.getAttribute('title') || link.textContent || '').trim();
       if (title && resetByName[title]) return resetByName[title];
     }
@@ -159,8 +176,8 @@ export const RESET_COUNTDOWN_PLACER_SCRIPT = `/* SAO 主题流量重置倒计时
     if (!labels.length) return;
     // 先认当前是哪台：详情页 URL /server/<uuid> 最准
     var ts = null;
-    var m = (window.location.pathname || '').match(/\/server\/([^/?#]+)/);
-    if (m) ts = resetByUuid[decodeURIComponent(m[1])] || null;
+    var uid = serverIdFromPath(window.location.pathname || '');
+    if (uid) ts = resetByUuid[uid] || null;
     if (!ts) ts = tsForName(document.body.textContent || '');
     if (!ts) return;
     labels.forEach(function (labelEl) { injectIntoLabel(labelEl, ts); });
