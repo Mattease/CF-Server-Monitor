@@ -1,7 +1,7 @@
 // 前端计费/时间工具。通用计费逻辑（价格、货币、周期、到期续期、
 // expire_at 解析）唯一实现在 src/shared/serverBilling.js，此处转发导出；
-// 本文件只留前端专属部分：datetime-local 换算、本地化标签、价格格式化、
-// 流量重置倒计时。
+// 流量重置时间计算的唯一实现在 src/shared/resetTime.js，此处转发导出；
+// 本文件只留前端专属部分：datetime-local 换算、本地化标签、价格格式化。
 import {
   daysInUtcMonth,
   detectBillingCycle,
@@ -35,6 +35,13 @@ export {
   toDateString
 } from '../../shared/serverBilling.js';
 
+import {
+  getTimezoneOffsetMs,
+  getZonedWallParts
+} from '../../shared/resetTime.js';
+
+export { daysUntilNextReset } from '../../shared/resetTime.js';
+
 export function isDisabledProbeMetric(value) {
   return value === false || value === 'false';
 }
@@ -48,32 +55,6 @@ export function isFreePrice(value) {
 // isoToLocalInput：把存储的 ISO（带时区偏移）换算成所选时区的墙上时间 "YYYY-MM-DDTHH:MM:SS"；
 // tz 为空表示浏览器本地时区。localInputToIso：反向，把墙上时间按所选时区拼回带偏移的 ISO。
 const pad2 = (value) => String(value).padStart(2, '0');
-
-function getZonedWallParts(timestamp, timeZone) {
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hour12: false,
-    hourCycle: 'h23',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  });
-  return Object.fromEntries(
-    formatter.formatToParts(new Date(timestamp)).map(part => [part.type, part.value])
-  );
-}
-
-function getTimezoneOffsetMs(timestamp, timeZone) {
-  const parts = getZonedWallParts(timestamp, timeZone);
-  const wallAsUtc = Date.UTC(
-    Number(parts.year), Number(parts.month) - 1, Number(parts.day),
-    Number(parts.hour), Number(parts.minute), Number(parts.second)
-  );
-  return wallAsUtc - timestamp;
-}
 
 function formatTimezoneOffset(offsetMs) {
   const sign = offsetMs < 0 ? '-' : '+';
@@ -164,76 +145,6 @@ export function formatBillingPrice(server, lang = 'zh') {
 }
 
 // ---- 流量重置倒计时 ----
-// daysUntilNextReset：直接用面板里已配好的 reset_day / reset_time / timezone，
-// 算下次重置还有几天（向上取整）。reset_day 为 0 或空表示不重置，返回 null。
-// reset_day 超出当月天数时顺延到下月 1 号（与探针的周期算法一致），时刻仍用 resetTime。
-export function daysUntilNextReset(resetDay, resetTime, timezone, now = Date.now()) {
-  const day = Number(resetDay) || 0;
-  if (day < 1 || day > 31) return null;
-
-  const match = String(resetTime || '00:00:00').match(/^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/);
-  const hour = match ? Number(match[1]) : 0;
-  const minute = match ? Number(match[2]) : 0;
-  const second = match ? Number(match[3] || 0) : 0;
-
-  const tz = String(timezone || '').trim();
-
-  // 把目标时区的墙上时间 (y, m, d, h, mi, s) 换算成 UTC 毫秒
-  const wallToUtcMs = (y, m, d) => {
-    if (!tz) {
-      return new Date(y, m - 1, d, hour, minute, second).getTime();
-    }
-    try {
-      const guessUtc = Date.UTC(y, m - 1, d, hour, minute, second);
-      let offset = getTimezoneOffsetMs(guessUtc, tz);
-      let utcMs = guessUtc - offset;
-      offset = getTimezoneOffsetMs(utcMs, tz);
-      utcMs = guessUtc - offset;
-      return utcMs;
-    } catch (_) {
-      return NaN;
-    }
-  };
-
-  // 当前在目标时区的年月
-  let curYear;
-  let curMonth;
-  if (!tz) {
-    const d = new Date(now);
-    curYear = d.getFullYear();
-    curMonth = d.getMonth() + 1;
-  } else {
-    try {
-      const parts = getZonedWallParts(now, tz);
-      curYear = Number(parts.year);
-      curMonth = Number(parts.month);
-    } catch (_) {
-      const d = new Date(now);
-      curYear = d.getFullYear();
-      curMonth = d.getMonth() + 1;
-    }
-  }
-
-  // 候选：本月与下月（reset_day 超当月天数时顺延下月 1 号）
-  for (let add = 0; add < 2; add++) {
-    const total = curMonth - 1 + add;
-    const y = curYear + Math.floor(total / 12);
-    const m = ((total % 12) + 12) % 12 + 1;
-    const dim = daysInUtcMonth(y, m);
-    let ry = y;
-    let rm = m;
-    let rd = day;
-    if (day > dim) {
-      const nt = m + 1;
-      ry = nt > 12 ? y + 1 : y;
-      rm = nt > 12 ? 1 : nt;
-      rd = 1;
-    }
-    const ms = wallToUtcMs(ry, rm, rd);
-    if (Number.isFinite(ms) && ms > now) {
-      return Math.ceil((ms - now) / 86400000);
-    }
-  }
-  return null;
-}
+// daysUntilNextReset 的唯一实现已移到 src/shared/resetTime.js（文件顶部转发导出），
+// 与 Worker 共用同一份算法；此处不再保留拷贝。
 

@@ -10,6 +10,7 @@ import {
   getWorkerLatestReportUpdates
 } from '../utils/latestReportCache.js';
 import { markFrontendRealtimeActive } from '../utils/realtimeBroadcastGate.js';
+import { nextResetTimestampMs } from '../shared/resetTime.js';
 import {
   DASHBOARD_LATENCY_WINDOW_HOURS,
   DASHBOARD_LATENCY_WINDOW_POINTS,
@@ -243,7 +244,14 @@ export async function handleServersAPI(request, env, sys) {
       mergeMetricsIntoServer(server, latestMetrics);
     }
     normalizePublicIpFields(server);
-    
+
+    // 下次流量重置时刻由服务端统一计算（唯一实现 src/shared/resetTime.js），
+    // 供外部主题贴标脚本直接显示精确倒计时，浏览器不再自己算日期。
+    const resetNextTs = nextResetTimestampMs(server.reset_day, server.reset_time, server.timezone, now);
+    if (resetNextTs !== null) {
+      server.reset_next_ts = resetNextTs;
+    }
+
     if (isOnline) {
       globalOnline++;
       globalSpeedIn += parseFloat(server.net_in_speed) || 0;

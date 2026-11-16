@@ -14,7 +14,7 @@ import {
 } from '../utils/csp.js';
 import { checkAuth } from '../middleware/auth.js';
 import { normalizeThemeUrl } from '../utils/common.js';
-import { RESET_COUNTDOWN_INJECT_SCRIPT } from '../utils/resetCountdownInjectScript.js';
+import { RESET_COUNTDOWN_PLACER_SCRIPT } from '../utils/resetCountdownPlacer.js';
 
 const IMMUTABLE_ASSET_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 const PREVIEW_COOKIE = 'cfsm_theme_preview';
@@ -150,11 +150,12 @@ function injectAppearanceSettings(html, settings, env = {}, isExternalTheme = fa
     }
   }
 
-  // 外部主题（如 SAO）本身不显示流量重置倒计时，在 Worker 端直接注入倒计时脚本，
-  // 走 Worker 的 serveFrontend 流程，外观配置（标题/背景/CSP/主题切换）全部保留。
+  // 外部主题（如 SAO）本身不显示流量重置倒计时，在 Worker 端注入贴标脚本：
+  // 下次重置时刻已由 /api/servers 在服务端算好（reset_next_ts），脚本只贴标与每秒更新，
+  // 不在浏览器里算日期。走 Worker 的 serveFrontend 流程，外观配置（标题/背景/CSP/主题切换）全部保留。
   // 内置前端已有自己的倒计时实现，不注入，避免重复。
-  if (isExternalTheme && RESET_COUNTDOWN_INJECT_SCRIPT) {
-    const tag = `<script>\n${RESET_COUNTDOWN_INJECT_SCRIPT}\n</script>\n`;
+  if (isExternalTheme && RESET_COUNTDOWN_PLACER_SCRIPT) {
+    const tag = `<script>\n${RESET_COUNTDOWN_PLACER_SCRIPT}\n</script>\n`;
     if (/<\/body>/i.test(modifiedHtml)) {
       modifiedHtml = modifiedHtml.replace(/<\/body>/i, `${tag}</body>`);
     } else {
