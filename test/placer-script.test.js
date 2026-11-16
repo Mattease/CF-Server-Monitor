@@ -1,7 +1,7 @@
 // SAO 贴标脚本（src/utils/resetCountdownPlacer.js）回归测试。
 // 背景：2026-11-17 首版把正则写进了模板字符串，反斜杠被吃掉一层，
 // 服务端下发的脚本带语法错误、从未运行（旧药丸脚本同病）。
-// 本测试锁死三件事：下发文本可解析、文本里零反斜杠、在桩 DOM 上真能贴上并逐秒走字。
+// 本测试锁死三件事：下发文本可解析、文本里零反斜杠、在桩 DOM 上真能贴上并按分钟走字。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { RESET_COUNTDOWN_PLACER_SCRIPT as SCRIPT } from '../src/utils/resetCountdownPlacer.js';
@@ -94,7 +94,7 @@ function buildCard({ uuid, name, withLink = true }) {
   return { card, label };
 }
 
-test('贴标脚本在桩 DOM 上贴上倒计时并逐秒走字', async () => {
+test('贴标脚本在桩 DOM 上贴上倒计时并按分钟走字', async () => {
   const T0 = 1795000000000;
   const OFFSET = ((8 * 24 + 3) * 3600 + 13 * 60 + 24) * 1000;
   const realNow = Date.now;
@@ -139,7 +139,7 @@ test('贴标脚本在桩 DOM 上贴上倒计时并逐秒走字', async () => {
 
     const cd1 = c1.label.querySelector('[data-kuskure-cd]');
     assert.ok(cd1, 'card1 (uuid link) should get a countdown');
-    assert.equal(cd1.textContent, '8天3小时13分24秒重置');
+    assert.equal(cd1.textContent, '8天3小时13分重置');
     const wrap1 = c1.label.querySelector('[data-kuskure-reset]');
     assert.ok(wrap1, 'wrapper present');
     assert.equal(wrap1.children[0].tagName, 'B');
@@ -147,15 +147,15 @@ test('贴标脚本在桩 DOM 上贴上倒计时并逐秒走字', async () => {
 
     const cd2 = c2.label.querySelector('[data-kuskure-cd]');
     assert.ok(cd2, 'card2 (name fallback) should get a countdown');
-    assert.equal(cd2.textContent, '1小时0分0秒重置');
+    assert.equal(cd2.textContent, '1小时0分重置');
 
     // 推进 61 秒后触发 1 秒定时器，文字应随之减少
     Date.now = () => T0 + 61000;
     const tick = intervals.find(i => i.ms === 1000);
     assert.ok(tick, 'tick interval registered');
     tick.fn();
-    assert.equal(cd1.textContent, '8天3小时12分23秒重置');
-    assert.equal(cd2.textContent, '58分59秒重置');
+    assert.equal(cd1.textContent, '8天3小时12分重置');
+    assert.equal(cd2.textContent, '58分重置');
   } finally {
     Date.now = realNow;
   }

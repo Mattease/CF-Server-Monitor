@@ -56,18 +56,17 @@ export const RESET_COUNTDOWN_PLACER_SCRIPT = `/* SAO 主题流量重置倒计时
   // ---- 倒计时文字：对着目标时刻算差值，不做任何日期推算 ----
   function formatRemaining(target, now) {
     var diff = target - now;
-    if (diff <= 0) return '0秒重置';
+    if (diff <= 0) return '0分重置';
     var totalSec = Math.floor(diff / 1000);
     var parts = [
       [Math.floor(totalSec / 86400), '天'],
       [Math.floor((totalSec % 86400) / 3600), '小时'],
-      [Math.floor((totalSec % 3600) / 60), '分'],
-      [totalSec % 60, '秒']
+      [Math.floor((totalSec % 3600) / 60), '分']
     ];
     var start = 0;
     while (start < 2 && parts[start][0] === 0) start++;
     var out = '';
-    for (var i = start; i < 4; i++) out += parts[i][0] + parts[i][1];
+    for (var i = start; i < 3; i++) out += parts[i][0] + parts[i][1];
     return out + '重置';
   }
 
@@ -78,7 +77,8 @@ export const RESET_COUNTDOWN_PLACER_SCRIPT = `/* SAO 主题流量重置倒计时
     document.querySelectorAll('[data-kuskure-cd]').forEach(function (el) {
       var target = Number(el.getAttribute('data-kuskure-target'));
       if (!isFinite(target)) return;
-      el.textContent = formatRemaining(target, now);
+      var text = formatRemaining(target, now);
+      if (el.textContent !== text) el.textContent = text;
       if (target <= now) pastDue = true;
     });
     // 任一台已过重置点：拉一次新数据换上新一轮目标时刻（1 分钟内最多一次）
