@@ -273,7 +273,11 @@ export async function getMetricsHistory(
       ...sparseResult,
       results: sparseResult.results
         .filter(row => row.sample_json)
-        .map(row => JSON.parse(row.sample_json))
+        // 采样点时间戳对齐到桶起点：桶内首行的真实时间会随探针上报周期漂移
+        // （如 120 秒上报撞上 180 秒桶宽时，相邻点距在 120/240 秒之间交替），
+        // 前端按 1.25 倍标称间隔判空缺，会把 240 秒的正常步进误判为断点。
+        // 对齐后点距恒等于采样间隔，真实空缺（整桶无行）仍保持缺失。
+        .map(row => ({ ...JSON.parse(row.sample_json), timestamp: Number(row.bucket_start) }))
     };
   } else {
     const sourceQueries = [];

@@ -89,7 +89,7 @@ export function buildSparseHistoryQuery({
           ) AS end_id
         FROM sample_ranges
       )
-      SELECT ${sampleExpression} AS sample_json
+      SELECT ranges.range_start AS bucket_start, ${sampleExpression} AS sample_json
       FROM id_ranges AS ranges
       ORDER BY ranges.range_start ASC
     `,
