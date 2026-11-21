@@ -64,8 +64,11 @@ function withoutPrivateServerFields(server, sys) {
   // 显示开关关掉时，公开数据里也一并去掉，光靠前端藏没意义（接口仍可直接读到）
   if (sys && sys.show_price !== 'true') {
     delete item.price;
-    delete item.billing_cycle;
     delete item.currency;
+    // 付费周期本身不敏感：到期显示开着时要一起给，否则前端会把月付误标成年付
+    if (sys.show_expire !== 'true') {
+      delete item.billing_cycle;
+    }
   }
   if (sys && sys.show_expire !== 'true') {
     delete item.expire_date;
