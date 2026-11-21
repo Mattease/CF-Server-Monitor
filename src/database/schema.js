@@ -171,6 +171,19 @@ function buildHistorySourceQuery(tableName, columns) {
   `;
 }
 
+// 新旧历史表的分界 = 当前表里该分区最早一条记录的时间戳。表轮换是整表
+// 原子搬迁，当前表的数据必然全部晚于上次轮换时刻，因此用数据本身定分界
+// 与轮换周期（每周/每月）无关；按主键范围取首行，是索引定位不扫表。
+// 当前表为空（刚轮换完、探针还没上报）时返回 null，调用方按“全在旧表”处理。
+async function getHistoryTableBoundary(db, partitionId) {
+  const { startId, endId } = getHistoryIdRange(partitionId);
+  const row = await db.prepare(
+    `SELECT timestamp FROM metrics_history WHERE id >= ? AND id <= ? ORDER BY id ASC LIMIT 1`
+  ).bind(startId, endId).first();
+  const ts = row ? Number(row.timestamp) : NaN;
+  return Number.isFinite(ts) && ts > 0 ? ts : null;
+}
+
 export async function getMetricsHistory(
   db,
   serverId,
@@ -181,7 +194,7 @@ export async function getMetricsHistory(
 ) {
   const now = Date.now();
   const cacheDuration = getCacheDuration(hours);
-  const queryHours = Math.min(hours, 168);
+  const queryHours = Math.min(hours, 720);
   const configuredLongHistoryPoints = queryHours > 1
     ? Number(normalizeLongHistoryPoints(longHistoryPoints))
     : null;
@@ -199,11 +212,9 @@ export async function getMetricsHistory(
   const queryStart = Math.max(cutoff, historyInfo.startTimestamp);
 
   // 判断是否需要查询 metrics_history_old 表
-  // 如果实际查询起点早于本周日 00:00 UTC（表轮换时间），说明需要查旧表
-  const nowDate = new Date(now);
-  const day = nowDate.getUTCDay();
-  const thisSunday = new Date(Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth(), nowDate.getUTCDate() - day));
-  const needOldTable = queryStart < thisSunday.getTime();
+  // 查询起点早于当前表的分界（上次轮换时刻）时，需要合并旧表
+  const tableBoundary = (await getHistoryTableBoundary(db, historyInfo.partitionId)) ?? now;
+  const needOldTable = queryStart < tableBoundary;
   
   const oldTableExists = needOldTable && !!await db.prepare(
     `SELECT name FROM sqlite_master WHERE type='table' AND name='metrics_history_old'`
@@ -264,7 +275,7 @@ export async function getMetricsHistory(
       intervalMs,
       idPrefix,
       oldTableExists,
-      tableBoundary: thisSunday.getTime()
+      tableBoundary
     });
 
     debug('[History] SPARSE ID SAMPLING:', sparseQuery.bindValues.length, 'bind values');
@@ -287,7 +298,7 @@ export async function getMetricsHistory(
     bindValues.push(idRange.startId, idRange.endId);
 
     if (oldTableExists) {
-      debug('[History] 跨周查询，合并 metrics_history 和 metrics_history_old');
+      debug('[History] 跨轮换查询，合并 metrics_history 和 metrics_history_old');
       sourceQueries.push(buildHistorySourceQuery('metrics_history_old', sourceColumns));
       bindValues.push(idRange.startId, idRange.endId);
     }
@@ -444,10 +455,7 @@ export async function getDashboardLatencyHistory(db, servers, options = {}) {
   const cutoff = now - DASHBOARD_LATENCY_WINDOW_HOURS * 60 * 60 * 1000;
   const columns = DASHBOARD_LATENCY_COLUMNS.join(', ');
 
-  const nowDate = new Date(now);
-  const day = nowDate.getUTCDay();
-  const thisSunday = new Date(Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth(), nowDate.getUTCDate() - day));
-  const oldTableExists = cutoff < thisSunday.getTime() && !!await db.prepare(
+  const oldTablePresent = !!await db.prepare(
     `SELECT name FROM sqlite_master WHERE type='table' AND name='metrics_history_old'`
   ).first();
 
@@ -493,6 +501,8 @@ export async function getDashboardLatencyHistory(db, servers, options = {}) {
       }
 
       const idPrefix = getHistoryIdRange(historyInfo.partitionId).startId;
+      const tableBoundary = (await getHistoryTableBoundary(db, historyInfo.partitionId)) ?? now;
+      const oldTableExists = oldTablePresent && queryStart < tableBoundary;
       const sparseQuery = buildSparseHistoryQuery({
         columns,
         queryStart,
@@ -501,7 +511,7 @@ export async function getDashboardLatencyHistory(db, servers, options = {}) {
         intervalMs,
         idPrefix,
         oldTableExists,
-        tableBoundary: thisSunday.getTime(),
+        tableBoundary,
         sampleOrder: 'DESC'
       });
       items.push({ serverId, sparseQuery });

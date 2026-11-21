@@ -283,14 +283,15 @@ test('cold settings failures still use defaults without repeated reads and recov
   assert.equal(db.stats.writes, 0);
 });
 
-test('cron keeps weekly rotation skip and does not force refresh without a DO binding', async t => {
+test('cron keeps monthly rotation skip and does not force refresh without a DO binding', async t => {
   setup(t);
   const db = makeDb(makeSettings({ tg_notify: '0', tg_bot_token: '' }));
   await worker.scheduled({ cron: '*/1 * * * *' }, { DB: db }, {});
   await worker.scheduled({ cron: '*/1 * * * *' }, { DB: db }, {});
   assert.equal(db.stats.settings, 1);
   clearAllCaches();
-  t.mock.timers.setTime(Date.UTC(2026, 9, 25, 0, 2));
+  // 2026-11-01 是周日且是当月第一个周日，处于月度表轮换跳过窗口内。
+  t.mock.timers.setTime(Date.UTC(2026, 10, 1, 0, 2));
   await worker.scheduled({ cron: '*/1 * * * *' }, { DB: db }, {});
   assert.equal(db.stats.settings, 1);
 });

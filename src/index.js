@@ -104,7 +104,7 @@ async function isTurnstileVerified(request, env, sys) {
 async function fetchHistoryData(env, request, id, hours, columns, sys = null) {
   if (!id) return createBadRequestResponse('Missing ID');
 
-  const ALLOWED_HOURS = [0.167, 0.5, 1, 6, 12, 24, 48, 96, 168];
+  const ALLOWED_HOURS = [0.167, 0.5, 1, 6, 12, 24, 48, 72, 96, 168, 720];
   if (!ALLOWED_HOURS.includes(hours)) {
     return createBadRequestResponse('Invalid hours parameter');
   }
@@ -118,15 +118,11 @@ async function fetchHistoryData(env, request, id, hours, columns, sys = null) {
     return simpleAuthResponse();
   }
   
-  if (hours > 24 && !isLoggedIn) {
-    return createUnauthorizedResponse();
-  }
-  
   const server = await getServerDetail(env.DB, id, isLoggedIn);
   if (!server) return createNotFoundResponse();
   
-  // 最多查询7天数据
-  const clampedHours = Math.min(hours, 168);
+  // 最多查询30天数据
+  const clampedHours = Math.min(hours, 720);
   const cacheDuration = getCacheDuration(clampedHours);
   const longHistoryPoints = clampedHours > 1
     ? Number(normalizeLongHistoryPoints(sys.long_history_points))
@@ -473,8 +469,8 @@ export default {
     const minute = now.getUTCMinutes();
     
     if (cron === '*/1 * * * *') {
-      if (day === 0 && hour === 0 && minute < 5) {
-        debug('[Cron] 每周日0:00-0:05表轮换期间，跳过离线节点检测');
+      if (day === 0 && hour === 0 && minute < 5 && now.getUTCDate() <= 7) {
+        debug('[Cron] 每月第一个周日0:00-0:05表轮换期间，跳过离线节点检测');
       } else {
         // 两项检测共用本轮设置，避免偶数分钟再次强制刷新。
         const siteSettings = await loadSiteSettings(env.DB, {
@@ -488,10 +484,10 @@ export default {
         debug('[Cron] 资源负载告警检测完成');
       }
     } else if (cron === '0 * * * *') {
-      if (day === 0 && hour === 0) {
-        debug('[Cron] 开始执行每周数据清理任务（表轮换）');
+      if (day === 0 && hour === 0 && now.getUTCDate() <= 7) {
+        debug('[Cron] 开始执行每月数据清理任务（表轮换）');
         await weeklyCleanup(env.DB);
-        debug('[Cron] 每周数据清理任务完成');
+        debug('[Cron] 每月数据清理任务完成');
       }
       debug('[Cron] 检查是否到达服务器到期检测时间');
       await checkExpiringServers(env.DB, { scheduled: true, now: now.getTime() });
