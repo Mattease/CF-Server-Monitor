@@ -15,6 +15,30 @@ function buildSampleJsonExpression(tableName, jsonColumns, sampleOrder) {
   )`;
 }
 
+// Builds a query for the single most recent row inside an id range, keeping
+// the row's real timestamp. Used to append truthful tail points after sparse
+// bucket sampling: a series that ends mid-bucket would otherwise appear to
+// end at that bucket's start (up to one bucket width too early). When
+// requireAnyOf is given, only rows with at least one of those columns
+// non-null qualify (e.g. the last row that still carried ping data).
+export function buildTailSampleQuery({ columns, requireAnyOf = [] }) {
+  const columnList = columns.split(',').map(column => column.trim()).filter(Boolean);
+  const jsonColumns = ['timestamp', ...columnList]
+    .flatMap(column => [`'${column}'`, column])
+    .join(', ');
+  const required = requireAnyOf
+    .map(column => String(column).trim())
+    .filter(Boolean);
+  const filter = required.length
+    ? ` AND (${required.map(column => `${column} IS NOT NULL`).join(' OR ')})`
+    : '';
+  return `SELECT json_object(${jsonColumns}) AS sample_json
+    FROM metrics_history
+    WHERE id >= ? AND id < ?${filter}
+    ORDER BY id DESC
+    LIMIT 1`;
+}
+
 export function buildSparseHistoryQuery({
   columns,
   queryStart,

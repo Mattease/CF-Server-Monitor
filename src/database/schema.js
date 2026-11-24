@@ -5,6 +5,7 @@ import { ensureServerOptimization, buildHistoryId, getServerHistoryInfo, getHist
 import { addHistoryColumns } from './updateDatabase.js';
 import {
   buildSparseHistoryQuery,
+  buildTailSampleQuery,
   shouldUseSparseHistorySampling
 } from './historySampling.js';
 import {
@@ -280,15 +281,81 @@ export async function getMetricsHistory(
 
     debug('[History] SPARSE ID SAMPLING:', sparseQuery.bindValues.length, 'bind values');
     const sparseResult = await db.prepare(sparseQuery.sql).bind(...sparseQuery.bindValues).all();
+    const sampledRows = sparseResult.results
+      .filter(row => row.sample_json)
+      // 采样点时间戳对齐到桶起点：桶内首行的真实时间会随探针上报周期漂移
+      // （如 120 秒上报撞上 180 秒桶宽时，相邻点距在 120/240 秒之间交替），
+      // 前端按 1.25 倍标称间隔判空缺，会把 240 秒的正常步进误判为断点。
+      // 对齐后点距恒等于采样间隔，真实空缺（整桶无行）仍保持缺失。
+      .map(row => {
+        const parsed = JSON.parse(row.sample_json);
+        return { parsed, aligned: { ...parsed, timestamp: Number(row.bucket_start) } };
+      });
+    const results = sampledRows.map(item => item.aligned);
+
+    // 尾部真值点：桶对齐只适用于中间点。某路数据在桶中途终止时（探针停报、
+    // 延迟一路中断），最后一桶的样本仍是桶内首行，图上断点会被标到桶起点，
+    // 比真实终止时刻早最多一个桶宽（30 天视图约 6 小时）。这里按真实时间戳
+    // 补尾点：窗口内的最后一行（让右缘落在真实最新上报），以及延迟四列的
+    // 真实末行（让延迟线的断点落在真实终止时刻）。尾点失败不影响主结果。
+    try {
+      const tailRange = getHistoryIdRange(historyInfo.partitionId, queryStart, queryEnd);
+      const tailBinds = [tailRange.startId, tailRange.endId];
+      const pushedTailTimestamps = new Set();
+      const pushTail = (sampleJson, afterRealTs) => {
+        if (!sampleJson) return;
+        const tail = JSON.parse(sampleJson);
+        const tailTs = Number(tail.timestamp);
+        if (!Number.isFinite(tailTs)) return;
+        if (afterRealTs != null && tailTs <= afterRealTs) return;
+        if (pushedTailTimestamps.has(tailTs)) return;
+        pushedTailTimestamps.add(tailTs);
+        results.push(tail);
+      };
+
+      const lastSampleRealTs = sampledRows.length
+        ? Number(sampledRows[sampledRows.length - 1].parsed.timestamp)
+        : null;
+      const overallTail = await db.prepare(
+        buildTailSampleQuery({ columns: sourceColumns })
+      ).bind(...tailBinds).first();
+      pushTail(overallTail?.sample_json, lastSampleRealTs);
+
+      // 延迟尾点只看三网四列（ping_node_* 是另一路目标，不在此列）：
+      // 主尾点取最后一个 ping_ct 非空的行——探针每轮同时写四列，这一行就是
+      // 整组延迟真实终止的那一刻；再补一个「任一列非空」的尾点，收容个别
+      // 线路偶尔漏回的零星值。两者与已采样点重复时由 pushTail 自动去重。
+      const pingColumns = ['ping_ct', 'ping_cu', 'ping_cm', 'ping_bd']
+        .filter(column => columnList.includes(column));
+      if (pingColumns.length) {
+        const lastSampleRealTsFor = columnsToCheck => {
+          for (let i = sampledRows.length - 1; i >= 0; i--) {
+            const parsed = sampledRows[i].parsed;
+            if (columnsToCheck.some(column => parsed[column] != null)) {
+              return Number(parsed.timestamp);
+            }
+          }
+          return null;
+        };
+        const primaryTail = await db.prepare(
+          buildTailSampleQuery({ columns: sourceColumns, requireAnyOf: [pingColumns[0]] })
+        ).bind(...tailBinds).first();
+        pushTail(primaryTail?.sample_json, lastSampleRealTsFor([pingColumns[0]]));
+
+        const anyTail = await db.prepare(
+          buildTailSampleQuery({ columns: sourceColumns, requireAnyOf: pingColumns })
+        ).bind(...tailBinds).first();
+        pushTail(anyTail?.sample_json, lastSampleRealTsFor(pingColumns));
+      }
+
+      results.sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+    } catch (tailError) {
+      debug('[History] tail sample failed:', tailError?.message || tailError);
+    }
+
     rawResult = {
       ...sparseResult,
-      results: sparseResult.results
-        .filter(row => row.sample_json)
-        // 采样点时间戳对齐到桶起点：桶内首行的真实时间会随探针上报周期漂移
-        // （如 120 秒上报撞上 180 秒桶宽时，相邻点距在 120/240 秒之间交替），
-        // 前端按 1.25 倍标称间隔判空缺，会把 240 秒的正常步进误判为断点。
-        // 对齐后点距恒等于采样间隔，真实空缺（整桶无行）仍保持缺失。
-        .map(row => ({ ...JSON.parse(row.sample_json), timestamp: Number(row.bucket_start) }))
+      results
     };
   } else {
     const sourceQueries = [];
